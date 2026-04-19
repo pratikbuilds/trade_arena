@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>x402 / MPP Wallet Broker Validation</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #1f2937;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --good: #22c55e;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+      --line: #334155;
+      --link: #7dd3fc;
+    }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(180deg, #020617 0%, #0f172a 100%);
+      color: var(--text);
+    }
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 40px 20px 72px;
+    }
+    h1, h2, h3 {
+      line-height: 1.15;
+      margin: 0 0 12px;
+    }
+    p, li {
+      color: var(--text);
+      line-height: 1.55;
+    }
+    .muted {
+      color: var(--muted);
+    }
+    .card {
+      background: rgba(17, 24, 39, 0.88);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 20px;
+      margin-top: 18px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+    }
+    .grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+    .pivot { background: rgba(245, 158, 11, 0.18); color: #fcd34d; }
+    .good { background: rgba(34, 197, 94, 0.16); color: #86efac; }
+    .bad { background: rgba(239, 68, 68, 0.16); color: #fca5a5; }
+    ul {
+      margin: 8px 0 0 20px;
+      padding: 0;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      background: rgba(148, 163, 184, 0.12);
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+    a {
+      color: var(--link);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    th, td {
+      border-top: 1px solid var(--line);
+      text-align: left;
+      padding: 10px 8px;
+      vertical-align: top;
+    }
+    th {
+      color: var(--muted);
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="card">
+      <span class="pill pivot">Verdict: Pivot</span>
+      <h1>x402 / MPP Wallet Permission App</h1>
+      <p class="muted">Validated on April 19, 2026 for the idea: let users create/fund a wallet once, then authorize desktop/mobile/tools to execute x402 and MPP payments through app-mediated sign-in and spending limits, without sharing private keys locally.</p>
+      <p><strong>Bottom line:</strong> the problem is real, but the default product shape is already partially solved. The strongest version is not "another wallet app." The strongest version is a <strong>cross-client permission broker</strong> for agent payments: policy-based delegated signing across x402, MPP, MCP clients, desktop apps, and mobile apps.</p>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Score</h2>
+        <table>
+          <tr><th>Dimension</th><th>Score</th></tr>
+          <tr><td>Founder-fit</td><td>Unknown / 1</td></tr>
+          <tr><td>MVP speed</td><td>2</td></tr>
+          <tr><td>Distribution</td><td>1</td></tr>
+          <tr><td>Market pull</td><td>2</td></tr>
+          <tr><td>Revenue clarity</td><td>1</td></tr>
+          <tr><td><strong>Total</strong></td><td><strong>7 / 15</strong></td></tr>
+        </table>
+        <p class="muted">Interpretation: not a clean "go build the full standalone app," but strong enough for a narrow validation sprint.</p>
+      </div>
+
+      <div class="card">
+        <h2>Recommendation</h2>
+        <p><strong>Do not</strong> start with a full wallet product.</p>
+        <p><strong>Do</strong> validate a narrower wedge:</p>
+        <ul>
+          <li>OAuth-like grant links for agent payment access</li>
+          <li>Per-tool spend caps and recipient allowlists</li>
+          <li>One wallet usable across Claude/Desktop/mobile/tooling</li>
+          <li>x402 + MPP policy execution with revocation and audit logs</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Why This Problem Is Real</h2>
+      <ul>
+        <li>Coinbase Payments MCP already frames the same pain directly: agents should pay for services without API keys, seed phrases, or manual intervention.</li>
+        <li>x402 V2, published December 11, 2025, explicitly added wallet-controlled sessions and reusable access, which means the ecosystem is already moving toward delegated identity and repeat-use permissions.</li>
+        <li>Stripe machine payments docs now show support for <code>x402</code> on Base and Solana, and <code>MPP</code> on Tempo plus card rails, which confirms this is becoming multi-rail infrastructure rather than a niche hack.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>What Weakens The Standalone App Thesis</h2>
+      <ul>
+        <li>Coinbase Payments MCP already offers email/OTP sign-in, an embedded wallet, funding flow, and spending limits in a wallet UI.</li>
+        <li>Turnkey and Privy already sell the hard wallet-control primitives: enclaves, authorization keys, policy engines, transfer limits, allowlists, and multi-factor controls.</li>
+        <li>x402 on Solana already highlights wallet/infrastructure providers and facilitators. That means your base layer is getting commoditized quickly.</li>
+        <li>The risk is building a wrapper around capabilities that buyers can already assemble from Coinbase + Turnkey/Privy/Crossmint.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Crypto Necessity Gut-Check</h2>
+      <p><strong>If you remove blockchain entirely, what breaks?</strong></p>
+      <ul>
+        <li>Cross-app programmable spend rights become less portable.</li>
+        <li>Agent-native micropayments over <code>HTTP 402</code> lose their default settlement rail.</li>
+        <li>Interoperability across x402 and MPP becomes weaker if every app falls back to closed SaaS billing.</li>
+      </ul>
+      <p><strong>Conclusion:</strong> crypto is necessary for the payment rail and permission portability. It is <strong>not</strong> necessary for the entire product surface. Your defensibility will come from policy, developer UX, and trust, not just "there is a wallet."</p>
+    </div>
+
+    <div class="card">
+      <h2>Best Wedge</h2>
+      <p>Reframe the idea from <strong>"wallet app"</strong> to <strong>"agent payment permissions layer."</strong></p>
+      <table>
+        <tr>
+          <th>Bad Positioning</th>
+          <th>Better Positioning</th>
+        </tr>
+        <tr>
+          <td>A safer wallet for x402 and MPP</td>
+          <td>An app-agnostic grant system for agent payment permissions</td>
+        </tr>
+        <tr>
+          <td>Create wallet, fund wallet, use wallet</td>
+          <td>Create grant, bind tool/app identity, enforce policy, revoke instantly</td>
+        </tr>
+        <tr>
+          <td>Competes with Coinbase wallet UX</td>
+          <td>Complements Coinbase, Turnkey, Privy, Crossmint, and future wallets</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Integration-First Assessment</h2>
+      <p>This should be built <strong>integration-first</strong>, not as a new protocol or custom on-chain system.</p>
+      <ul>
+        <li>Use existing wallet infrastructure for key isolation and policy enforcement.</li>
+        <li>Use x402 / MPP as the settlement and payment-challenge protocols.</li>
+        <li>Build the missing layer: portable grants, per-client authorization, session management, auditability, and revocation UX.</li>
+      </ul>
+      <p><strong>Advantage:</strong> faster MVP, lower security surface, lower audit burden.</p>
+    </div>
+
+    <div class="card">
+      <h2>Key Risks</h2>
+      <ul>
+        <li><span class="pill bad">High</span> Distribution: developers may just use Coinbase Payments MCP unless your cross-client story is clearly better.</li>
+        <li><span class="pill bad">High</span> Commoditization: wallet vendors can add grant links and policy presets quickly.</li>
+        <li><span class="pill pivot">Medium</span> Trust: users must believe your app cannot escalate access or leak signing authority.</li>
+        <li><span class="pill pivot">Medium</span> UX: asking users to fund a separate wallet adds friction unless reuse across tools is materially better.</li>
+        <li><span class="pill pivot">Medium</span> Protocol churn: MPP is new, and surrounding interfaces are still moving.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Next Validation Sprint</h2>
+      <ol>
+        <li>Interview 8 users already using agent tools or paid MCP/x402 flows. Ask how they handle keys today, what they refuse to install, and where they want spend limits.</li>
+        <li>Ship a fake-door demo: connect tool, request grant link, approve max spend, show revocation dashboard. No blockchain complexity beyond a demo wallet.</li>
+        <li>Test two wedges only:
+          <ul>
+            <li>Cross-client grant broker for desktop/mobile/apps</li>
+            <li>Team policy console for agent operators</li>
+          </ul>
+        </li>
+        <li>Do not build custody, swaps, or general wallet features until at least 3 users ask for them during real usage.</li>
+        <li>Validate whether people will switch from "local private key in sandbox" to "grant link + policy wallet" even if setup takes 2 minutes longer.</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h2>Go / No-Go</h2>
+      <p><strong>Standalone wallet app:</strong> <span class="pill bad">No-Go</span></p>
+      <p><strong>Permission broker / policy layer for x402 + MPP across clients:</strong> <span class="pill good">Conditional Go</span></p>
+      <p class="muted">Condition: prove that users want one permissioned wallet identity across multiple tools, not just another embedded wallet inside one product.</p>
+    </div>
+
+    <div class="card">
+      <h2>Sources</h2>
+      <ul>
+        <li><a href="https://docs.cdp.coinbase.com/payments-mcp/welcome">Coinbase Payments MCP: Welcome</a></li>
+        <li><a href="https://docs.cdp.coinbase.com/payments-mcp/faq">Coinbase Payments MCP: FAQ</a></li>
+        <li><a href="https://docs.cdp.coinbase.com/payments-mcp/tools-reference">Coinbase Payments MCP: Tools Reference</a></li>
+        <li><a href="https://www.x402.org/writing/x402-v2-launch">x402 V2 launch post</a></li>
+        <li><a href="https://docs.turnkey.com/products/embedded-wallets/features/policy-engine">Turnkey policy engine docs</a></li>
+        <li><a href="https://docs.privy.io/security/wallet-infrastructure/policy-and-controls">Privy wallet policies and controls</a></li>
+        <li><a href="https://solana.com/x402">Solana x402 ecosystem page</a></li>
+        <li><a href="https://docs.stripe.com/payments/machine">Stripe machine payments docs</a></li>
+        <li><a href="https://www.paytoll.dev/">PayToll on Solana MPP</a></li>
+      </ul>
+    </div>
+  </main>
+</body>
+</html>
