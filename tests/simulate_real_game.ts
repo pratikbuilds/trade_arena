@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// Trade Arena — Real 5-Minute Multi-Trade Simulation
+// Trade Arena — Real Multi-Trade Simulation
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // This harness runs a real devnet + MagicBlock ER game and replaces the
@@ -21,6 +21,8 @@
 
 import * as anchor from "@coral-xyz/anchor";
 import { Program, BN } from "@coral-xyz/anchor";
+import * as fs from "fs";
+import * as path from "path";
 import { TradeArena } from "../target/types/trade_arena";
 import {
   createMint,
@@ -32,6 +34,7 @@ import {
 import {
   createTopUpEscrowInstruction,
   escrowPdaFromEscrowAuthority,
+  GetCommitmentSignature,
 } from "@magicblock-labs/ephemeral-rollups-sdk";
 import { expect } from "chai";
 
@@ -47,16 +50,26 @@ const GAME_SEED = Buffer.from("game");
 const PLAYER_SEED = Buffer.from("player");
 const VAULT_SEED = Buffer.from("vault");
 
-const DURATION = 300;
+const DURATION = Number(process.env.SIM_DURATION_SECONDS ?? "300");
 const ENTRY_FEE = 1_000_000;
-const TARGET_TRADES_PER_PLAYER = 12;
+const TARGET_TRADES_PER_PLAYER = Number(
+  process.env.SIM_TARGET_TRADES_PER_PLAYER ?? "12"
+);
 const HOLD_MS = 6_000;
 const PAUSE_BETWEEN_CYCLES_MS = 1_500;
 const ENTRY_BUFFER_MS = 45_000;
 const MIN_TRADE_NOTIONAL_USD = 150;
 const MAX_TRADE_NOTIONAL_USD = 900;
+const REPORT_PATH =
+  process.env.SIM_REPORT_PATH ??
+  path.join(
+    process.cwd(),
+    "artifacts",
+    `simulation-instruction-log-${Date.now()}.md`
+  );
 
 type SideArg = { long: {} } | { short: {} };
+type ClusterKind = "devnet" | "magicblock-er";
 
 type ParsedPlayerState = {
   virtualUsdc: bigint;
@@ -79,6 +92,16 @@ type TradeRecord = {
   closedAtMs?: number;
   openSig: string;
   closeSig?: string;
+};
+
+type InstructionRecord = {
+  atMs: number;
+  step: string;
+  cluster: ClusterKind;
+  endpoint: string;
+  sig: string;
+  url: string;
+  note?: string;
 };
 
 function u64Le(n: number): Buffer {
@@ -121,6 +144,17 @@ function findVaultPDA(
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function parseGameStartTime(data: Buffer): number {
+  return Number(data.readBigInt64LE(96));
+}
+
+function findBufferPDA(account: anchor.web3.PublicKey): anchor.web3.PublicKey {
+  return anchor.web3.PublicKey.findProgramAddressSync(
+    [Buffer.from("buffer"), account.toBuffer()],
+    DELEGATION_PROGRAM_ID
+  )[0];
+}
+
 function elapsed(startMs: number): string {
   return `T+${Math.round((Date.now() - startMs) / 1000)}s`;
 }
@@ -131,6 +165,16 @@ function fmtUsd(v: number): string {
 
 function fmtBtc(v: number): string {
   return v.toFixed(4);
+}
+
+function txUrl(cluster: ClusterKind, sig: string): string {
+  if (cluster === "devnet") {
+    return `https://explorer.solana.com/tx/${sig}?cluster=devnet`;
+  }
+
+  return `https://explorer.solana.com/tx/${sig}?customUrl=${encodeURIComponent(
+    ER_ENDPOINT
+  )}`;
 }
 
 async function sendToER(
@@ -149,17 +193,128 @@ async function confirmER(
   erConn: anchor.web3.Connection,
   sig: string
 ): Promise<void> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      await erConn.confirmTransaction(sig, "confirmed");
-      return;
-    } catch {
-      if (attempt === 2) {
-        throw new Error(`ER confirm timeout for ${sig.slice(0, 12)}`);
+  await erConn.confirmTransaction(sig, "confirmed");
+
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const statuses = await erConn.getSignatureStatuses([sig]);
+    const status = statuses.value[0];
+    if (status?.confirmationStatus) {
+      if (status.err) {
+        throw new Error(
+          `ER transaction ${sig.slice(0, 12)} failed: ${JSON.stringify(
+            status.err
+          )}`
+        );
       }
-      await sleep(1_000);
+      return;
     }
+    await sleep(500);
   }
+
+  throw new Error(`ER confirm timeout for ${sig.slice(0, 12)}`);
+}
+
+async function waitForBaseAccount(
+  baseConnection: anchor.web3.Connection,
+  account: anchor.web3.PublicKey,
+  label: string,
+  timeoutMs = 60_000
+): Promise<anchor.web3.AccountInfo<Buffer>> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const info = await baseConnection.getAccountInfo(account, "confirmed");
+    if (info) return info;
+    await sleep(1_000);
+  }
+
+  throw new Error(`${label} did not appear on base layer in time`);
+}
+
+async function waitForOwner(
+  connection: anchor.web3.Connection,
+  account: anchor.web3.PublicKey,
+  owner: anchor.web3.PublicKey,
+  timeoutMs = 60_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const info = await connection.getAccountInfo(account, "confirmed");
+    if (info?.owner.equals(owner)) return;
+    await sleep(1_000);
+  }
+
+  throw new Error(
+    `${account.toBase58()} did not return to owner ${owner.toBase58()}`
+  );
+}
+
+async function ownerMatches(
+  connection: anchor.web3.Connection,
+  account: anchor.web3.PublicKey,
+  owner: anchor.web3.PublicKey,
+  timeoutMs = 60_000
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const info = await connection.getAccountInfo(account, "confirmed");
+    if (info?.owner.equals(owner)) return true;
+    await sleep(1_000);
+  }
+
+  return false;
+}
+
+async function finalizeUndelegationOnBase(args: {
+  program: Program<TradeArena>;
+  baseConnection: anchor.web3.Connection;
+  erConnection: anchor.web3.Connection;
+  payer: anchor.web3.PublicKey;
+  programId: anchor.web3.PublicKey;
+  baseAccount: anchor.web3.PublicKey;
+  accountSeeds: Buffer[];
+  erScheduleSig: string;
+}): Promise<{ baseCommitSig: string | null; finalizeSig: string | null }> {
+  const {
+    program,
+    baseConnection,
+    erConnection,
+    payer,
+    programId,
+    baseAccount,
+    accountSeeds,
+    erScheduleSig,
+  } = args;
+  const buffer = findBufferPDA(baseAccount);
+  let baseCommitSig: string | null = null;
+  try {
+    baseCommitSig = await GetCommitmentSignature(erScheduleSig, erConnection);
+    await baseConnection.confirmTransaction(baseCommitSig, "confirmed");
+  } catch {}
+
+  if (await ownerMatches(baseConnection, baseAccount, programId, 30_000)) {
+    return { baseCommitSig, finalizeSig: null };
+  }
+
+  await waitForBaseAccount(
+    baseConnection,
+    buffer,
+    "undelegation buffer",
+    180_000
+  );
+
+  const finalizeSig = await program.methods
+    .processUndelegation(accountSeeds)
+    .accounts({
+      baseAccount,
+      buffer,
+      payer,
+      systemProgram: anchor.web3.SystemProgram.programId,
+    })
+    .rpc();
+
+  await waitForOwner(baseConnection, baseAccount, programId);
+  return { baseCommitSig, finalizeSig };
 }
 
 function parsePlayerStateBuffer(data: Buffer): ParsedPlayerState | null {
@@ -255,9 +410,8 @@ function decideSide(
   return cycle % 2 === 0 ? { long: {} } : { short: {} };
 }
 
-function computeTradeSizeUnits(
+function computeTradeNotionalMicros(
   virtualUsdc: bigint,
-  livePriceUsd: number,
   cycle: number
 ): number {
   const virtualUsd = Number(virtualUsdc) / 1e6;
@@ -265,12 +419,10 @@ function computeTradeSizeUnits(
     MIN_TRADE_NOTIONAL_USD,
     Math.min(MAX_TRADE_NOTIONAL_USD, virtualUsd * (0.055 + (cycle % 3) * 0.015))
   );
-  const btc = notionalUsd / livePriceUsd;
-  const units = Math.floor(btc * 1e6);
-  return Math.max(units, 1_500);
+  return Math.max(Math.floor(notionalUsd * 1e6), 10_000_000);
 }
 
-describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
+describe("Trade Arena — Real Multi-Trade Simulation", function () {
   this.timeout(1_200_000);
 
   const provider = anchor.AnchorProvider.env();
@@ -295,6 +447,7 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
     gamma: 0,
   };
   const tradeLedger: TradeRecord[] = [];
+  const instructionLog: InstructionRecord[] = [];
   const openTradeByPlayer = new Map<string, TradeRecord>();
   const priceHistory: number[] = [];
 
@@ -308,6 +461,61 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
   let betaATA: anchor.web3.PublicKey;
   let gammaATA: anchor.web3.PublicKey;
   let gameStartMs = Date.now();
+  let gameStartUnixTs: number | null = null;
+
+  function recordInstruction(
+    step: string,
+    cluster: ClusterKind,
+    sig: string,
+    note?: string
+  ): void {
+    instructionLog.push({
+      atMs: Date.now(),
+      step,
+      cluster,
+      endpoint:
+        cluster === "devnet" ? "https://api.devnet.solana.com" : ER_ENDPOINT,
+      sig,
+      url: txUrl(cluster, sig),
+      note,
+    });
+  }
+
+  after("write simulation instruction report", function () {
+    const lines = [
+      "# Simulation Instruction Log",
+      "",
+      `- Duration seconds: ${DURATION}`,
+      `- Target trades per player: ${TARGET_TRADES_PER_PLAYER}`,
+      `- Game ID: ${GAME_ID}`,
+      `- Game PDA: ${gamePDA?.toBase58() ?? "n/a"}`,
+      `- ER endpoint: ${ER_ENDPOINT}`,
+      `- Devnet endpoint: https://api.devnet.solana.com`,
+      "",
+      "## Instructions",
+      "",
+      "| # | T+sec | Step | Cluster | Signature | Link | Note |",
+      "| --- | ---: | --- | --- | --- | --- | --- |",
+      ...instructionLog.map((item, index) => {
+        const tSec =
+          gameStartMs > 0 ? Math.max(0, Math.round((item.atMs - gameStartMs) / 1000)) : 0;
+        return `| ${index + 1} | ${tSec} | ${item.step} | ${
+          item.cluster
+        } | \`${item.sig}\` | [open](${item.url}) | ${item.note ?? ""} |`;
+      }),
+      "",
+      "## Trade Summary",
+      "",
+      `- alpha completed: ${completedTrades.alpha}`,
+      `- beta completed: ${completedTrades.beta}`,
+      `- gamma completed: ${completedTrades.gamma}`,
+      `- total trade records: ${tradeLedger.length}`,
+    ];
+
+    fs.mkdirSync(path.dirname(REPORT_PATH), { recursive: true });
+    fs.writeFileSync(REPORT_PATH, `${lines.join("\n")}\n`, "utf8");
+    console.log(`\n  instruction report: ${REPORT_PATH}`);
+  });
 
   before("fund players and create USDC", async function () {
     playerNames[alpha.publicKey.toBase58()] = "alpha";
@@ -329,7 +537,8 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
         })
       );
     }
-    await provider.sendAndConfirm(fundTx);
+    const fundSig = await provider.sendAndConfirm(fundTx);
+    recordInstruction("fund_players", "devnet", fundSig, "0.1 SOL each");
     console.log("  ✓ funded players (0.1 SOL each)");
 
     usdcMint = await createMint(
@@ -365,13 +574,19 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
       [beta, betaATA],
       [gamma, gammaATA],
     ] as [anchor.web3.Keypair, anchor.web3.PublicKey][]) {
-      await mintTo(
+      const mintSig = await mintTo(
         provider.connection,
         creatorKeypair,
         usdcMint,
         ata,
         creatorKeypair,
         100_000_000
+      );
+      recordInstruction(
+        `mint_test_usdc_${playerNames[kp.publicKey.toBase58()]}`,
+        "devnet",
+        mintSig,
+        "100 USDC"
       );
     }
     console.log("  ✓ minted 100 USDC to each player");
@@ -391,7 +606,7 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
     const t0 = Date.now();
     const log = (msg: string) => console.log(`  [${elapsed(t0)}] ${msg}`);
 
-    await program.methods
+    const createGameSig = await program.methods
       .createGame(new BN(GAME_ID), new BN(ENTRY_FEE), new BN(DURATION), 3)
       .accounts({
         creator: creatorWallet.publicKey,
@@ -404,6 +619,7 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
       })
       .rpc();
+    recordInstruction("create_game", "devnet", createGameSig);
     log("✓ game created");
 
     for (const [player, ata, ps] of [
@@ -415,7 +631,7 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
       anchor.web3.PublicKey,
       anchor.web3.PublicKey
     ][]) {
-      await program.methods
+      const joinSig = await program.methods
         .joinGame()
         .accounts({
           player: player.publicKey,
@@ -428,15 +644,23 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
         })
         .signers([player])
         .rpc();
+      recordInstruction(
+        `join_game_${playerNames[player.publicKey.toBase58()]}`,
+        "devnet",
+        joinSig,
+        `entry fee ${ENTRY_FEE / 1e6} USDC`
+      );
     }
     const game = await program.account.game.fetch(gamePDA);
     log(`✓ all 3 joined — prize pool: ${game.prizePool.toNumber() / 1e6} USDC`);
 
-    const escrowTopup = 0.01 * anchor.web3.LAMPORTS_PER_SOL;
     for (const authority of [
       creatorWallet.publicKey,
       ...players.map((p) => p.publicKey),
     ]) {
+      const escrowTopup = authority.equals(creatorWallet.publicKey)
+        ? 0.05 * anchor.web3.LAMPORTS_PER_SOL
+        : 0.01 * anchor.web3.LAMPORTS_PER_SOL;
       const escrow = escrowPdaFromEscrowAuthority(authority);
       const ix = createTopUpEscrowInstruction(
         escrow,
@@ -444,7 +668,14 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
         creatorWallet.publicKey,
         escrowTopup
       );
-      await provider.sendAndConfirm(new anchor.web3.Transaction().add(ix));
+      const topupSig = await provider.sendAndConfirm(
+        new anchor.web3.Transaction().add(ix)
+      );
+      recordInstruction(
+        `topup_escrow_${playerNames[authority.toBase58()] ?? "creator"}`,
+        "devnet",
+        topupSig
+      );
     }
     log("✓ ER escrows funded");
 
@@ -453,7 +684,7 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
       [beta, psBeta],
       [gamma, psGamma],
     ] as [anchor.web3.Keypair, anchor.web3.PublicKey][]) {
-      await program.methods
+      const delegateSig = await program.methods
         .delegatePlayer()
         .accounts({
           player: player.publicKey,
@@ -465,10 +696,15 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
         })
         .signers([player])
         .rpc();
+      recordInstruction(
+        `delegate_player_${playerNames[player.publicKey.toBase58()]}`,
+        "devnet",
+        delegateSig
+      );
     }
     log("✓ all PlayerState accounts delegated to ER");
 
-    await program.methods
+    const delegateGameSig = await program.methods
       .delegateGame(new BN(GAME_ID))
       .accounts({
         creator: creatorWallet.publicKey,
@@ -478,6 +714,7 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
         systemProgram: anchor.web3.SystemProgram.programId,
       })
       .rpc();
+    recordInstruction("delegate_game", "devnet", delegateGameSig);
     log("✓ Game account delegated to ER");
   });
 
@@ -507,24 +744,32 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
       );
       priceHistory.push(livePriceUsd);
       const side = decideSide(name, priceHistory, cycle);
-      const sizeUnits = computeTradeSizeUnits(
+      const notionalMicros = computeTradeNotionalMicros(
         before!.virtualUsdc,
-        livePriceUsd,
         cycle
       );
 
       const tx = await program.methods
-        .openPosition(new BN(sizeUnits), side)
+        .tradePosition({
+          increase: { side, notionalUsdc: new BN(notionalMicros) },
+        })
         .accounts({
-          player: player.publicKey,
           game: gamePDA,
           playerState: ps,
+          sessionToken: null,
+          signer: player.publicKey,
           priceFeed: PYTH_LAZER_BTC_USD,
         })
         .transaction();
 
       const sig = await sendToER(erConnection, player, tx);
       await confirmER(erConnection, sig);
+      recordInstruction(
+        `trade_increase_${name}`,
+        "magicblock-er",
+        sig,
+        `${sideToString(side)} notional=$${fmtUsd(notionalMicros / 1e6)}`
+      );
       await sleep(600);
 
       const after = await fetchPlayerState(
@@ -583,17 +828,24 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
       );
 
       const tx = await program.methods
-        .closePosition()
+        .tradePosition({ closeAll: {} })
         .accounts({
-          player: player.publicKey,
           game: gamePDA,
           playerState: ps,
+          sessionToken: null,
+          signer: player.publicKey,
           priceFeed: PYTH_LAZER_BTC_USD,
         })
         .transaction();
 
       const sig = await sendToER(erConnection, player, tx);
       await confirmER(erConnection, sig);
+      recordInstruction(
+        `trade_close_${name}`,
+        "magicblock-er",
+        sig,
+        `${record!.side} close_all`
+      );
       await sleep(600);
 
       const after = await fetchPlayerState(
@@ -634,7 +886,11 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
       .transaction();
     const startSig = await sendToER(erConnection, creatorKeypair, startTx);
     await confirmER(erConnection, startSig);
+    recordInstruction("start_game", "magicblock-er", startSig);
     gameStartMs = Date.now();
+    const gameInfo = await erConnection.getAccountInfo(gamePDA, "confirmed");
+    expect(gameInfo).to.not.equal(null);
+    gameStartUnixTs = parseGameStartTime(Buffer.from(gameInfo!.data));
 
     console.log(`\n  [${elapsed(gameStartMs)}] ✓ game started on ER`);
     console.log(
@@ -693,7 +949,9 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
     );
     expect(openTradeByPlayer.size).to.equal(0);
 
-    const msUntilExpiry = gameStartMs + DURATION * 1000 - Date.now();
+    const msUntilExpiry =
+      ((gameStartUnixTs ?? Math.floor(Date.now() / 1000)) + DURATION) * 1000 -
+      Date.now();
     if (msUntilExpiry > 0) {
       log(
         `↻ all targets hit — waiting ${(msUntilExpiry / 1000).toFixed(
@@ -712,42 +970,101 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
     log("sending end_game to ER…");
     const endTx = await program.methods
       .endGame()
-      .accounts({ game: gamePDA })
+      .accounts({ game: gamePDA, priceFeed: PYTH_LAZER_BTC_USD })
       .remainingAccounts([
-        { pubkey: psAlpha, isWritable: false, isSigner: false },
-        { pubkey: psBeta, isWritable: false, isSigner: false },
-        { pubkey: psGamma, isWritable: false, isSigner: false },
+        { pubkey: psAlpha, isWritable: true, isSigner: false },
+        { pubkey: psBeta, isWritable: true, isSigner: false },
+        { pubkey: psGamma, isWritable: true, isSigner: false },
       ])
       .transaction();
     const endSig = await sendToER(erConnection, creatorKeypair, endTx);
     await confirmER(erConnection, endSig);
+    recordInstruction("end_game", "magicblock-er", endSig);
     log(`✓ end_game confirmed on ER sig:${endSig.slice(0, 8)}…`);
 
-    log("sending commit_game to ER…");
+    log("sending direct game commit/undelegate to ER…");
     const commitTx = await program.methods
       .commitGame()
-      .accounts({ payer: creatorWallet.publicKey, game: gamePDA })
+      .accounts({
+        payer: creatorWallet.publicKey,
+        game: gamePDA,
+      })
+      .remainingAccounts([
+        { pubkey: psAlpha, isWritable: true, isSigner: false },
+        { pubkey: psBeta, isWritable: true, isSigner: false },
+        { pubkey: psGamma, isWritable: true, isSigner: false },
+      ])
       .transaction();
     const commitSig = await sendToER(erConnection, creatorKeypair, commitTx);
     await confirmER(erConnection, commitSig);
-    log(`✓ commit_game confirmed on ER sig:${commitSig.slice(0, 8)}…`);
+    recordInstruction("commit_game", "magicblock-er", commitSig);
+    log(
+      `✓ game commit/undelegate confirmed on ER sig:${commitSig.slice(0, 8)}…`
+    );
 
-    log("⏳ polling for game propagation to base layer…");
-    const programStr = program.programId.toBase58();
-    const deadline = Date.now() + 120_000;
-    let propagated = false;
-    while (Date.now() < deadline) {
-      await sleep(5_000);
-      const info = await provider.connection.getAccountInfo(gamePDA);
-      const owner = info?.owner.toBase58();
-      log(`  game owner on base: ${owner?.slice(0, 12)}…`);
-      if (owner === programStr) {
-        propagated = true;
-        break;
+    log("⏳ waiting for base-layer commit and finalizing undelegation…");
+    const { baseCommitSig, finalizeSig } = await finalizeUndelegationOnBase({
+      program,
+      baseConnection: provider.connection,
+      erConnection,
+      payer: creatorWallet.publicKey,
+      programId: program.programId,
+      baseAccount: gamePDA,
+      accountSeeds: [
+        GAME_SEED,
+        creatorWallet.publicKey.toBuffer(),
+        u64Le(GAME_ID),
+      ],
+      erScheduleSig: commitSig,
+    });
+    if (baseCommitSig) {
+      recordInstruction(
+        "base_commit_from_er",
+        "devnet",
+        baseCommitSig,
+        "scheduled by ER commit_game"
+      );
+      log(`✓ base-layer commit observed sig:${baseCommitSig.slice(0, 8)}…`);
+    } else {
+      log("✓ base-layer commit propagated; finalized via undelegation buffer");
+    }
+    if (finalizeSig) {
+      recordInstruction(
+        "process_undelegation",
+        "devnet",
+        finalizeSig,
+        "base-layer finalize fallback"
+      );
+    }
+
+    for (const [player, playerState, label] of [
+      [alpha, psAlpha, "alpha"],
+      [beta, psBeta, "beta"],
+      [gamma, psGamma, "gamma"],
+    ] as [anchor.web3.Keypair, anchor.web3.PublicKey, string][]) {
+      const playerFinalize = await finalizeUndelegationOnBase({
+        program,
+        baseConnection: provider.connection,
+        erConnection,
+        payer: creatorWallet.publicKey,
+        programId: program.programId,
+        baseAccount: playerState,
+        accountSeeds: [
+          PLAYER_SEED,
+          gamePDA.toBuffer(),
+          player.publicKey.toBuffer(),
+        ],
+        erScheduleSig: commitSig,
+      });
+      if (playerFinalize.finalizeSig) {
+        recordInstruction(
+          `process_undelegation_${label}`,
+          "devnet",
+          playerFinalize.finalizeSig,
+          "base-layer finalize fallback"
+        );
       }
     }
-    expect(propagated, "game did not propagate to base within 120 s").to.be
-      .true;
     log("✓ game account back on base layer with winner recorded");
   });
 
@@ -770,11 +1087,10 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
       [beta, psBeta, "beta"],
       [gamma, psGamma, "gamma"],
     ] as [anchor.web3.Keypair, anchor.web3.PublicKey, string][]) {
-      const state = await fetchPlayerState(
-        ps,
-        erConnection,
-        provider.connection
-      );
+      const account = await provider.connection.getAccountInfo(ps, "confirmed");
+      expect(account, `${name} state missing on base layer`).to.not.equal(null);
+      expect(account!.owner.equals(program.programId), `${name} still delegated`).to.equal(true);
+      const state = parsePlayerStateBuffer(Buffer.from(account!.data));
       expect(state, `${name} state missing at final leaderboard`).to.not.equal(
         null
       );
@@ -850,7 +1166,7 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
 
     const beforeBal = (await getAccount(provider.connection, winnerATA)).amount;
 
-    await program.methods
+    const claimSig = await program.methods
       .claimPrize()
       .accounts({
         winner: winnerKey,
@@ -861,6 +1177,7 @@ describe("Trade Arena — Real 5-Minute Multi-Trade Simulation", function () {
       })
       .signers([winnerKP])
       .rpc();
+    recordInstruction("claim_prize", "devnet", claimSig);
 
     const afterBal = (await getAccount(provider.connection, winnerATA)).amount;
     const prize = Number(afterBal - beforeBal) / 1e6;

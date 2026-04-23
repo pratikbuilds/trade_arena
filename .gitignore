@@ -6,3 +6,7 @@ node_modules
 test-ledger
 .yarn
 .surfpool
+.brand-preview
+artifacts
+*.bak
+idea-shortlist-*.html

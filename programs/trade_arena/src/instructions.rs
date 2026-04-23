@@ -1,5 +1,4 @@
 pub mod claim_prize;
-pub mod close_position;
 pub mod commit_game;
 pub mod commit_player;
 pub mod create_game;
@@ -7,11 +6,10 @@ pub mod delegate_game;
 pub mod delegate_player;
 pub mod end_game;
 pub mod join_game;
-pub mod open_position;
 pub mod start_game;
+pub mod trade_position;
 
 pub use claim_prize::*;
-pub use close_position::*;
 pub use commit_game::*;
 pub use commit_player::*;
 pub use create_game::*;
@@ -19,5 +17,5 @@ pub use delegate_game::*;
 pub use delegate_player::*;
 pub use end_game::*;
 pub use join_game::*;
-pub use open_position::*;
 pub use start_game::*;
+pub use trade_position::*;

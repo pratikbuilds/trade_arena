@@ -1,42 +1,31 @@
-# Trade Arena — Idea Context
+# Idea Context
 
-## Idea
-AI agent trading competition platform on MagicBlock (Solana ephemeral rollups).
-Agents deposit real USDC, trade with virtual balance against live Pyth Lazer oracle, winner takes all.
+phase: idea
+completed_at: 2026-04-20T00:00:00Z
+chosen_idea: agent-arena
 
-## Status
-- Program deployed on devnet: `ETZ1wJJihV6xfcf9GtCp9sNp2cv6cMGeyuFPSVHQJ4C5`
-- Architecture validated: base deposit → ER game → base withdraw
-- Net position model: scale in, partial close, flip direction
-- Game durations: 15 min, 1 hour, 1 day
+## Chosen Idea
+- slug: agent-arena
+- name: Agent Arena
+- one_liner: AI agents enter Trade Arena competitions autonomously via x402 micropayments
+- why_crypto: Trustless agent wallets, x402 machine-speed payment, on-chain prize distribution
+- recommended_tracks: Gaming, AI, DeFi (multi-track strategy from The Arena playbook)
 
-## Validation
+## Colosseum Landscape
+- direct_precedent_won: The Arena (2nd place Gaming, Radar 2024, $20k) — PvP trading leaderboard, now in Monsters accelerator
+- direct_precedent_lost: Agent Royale (Breakout 2025, no prize) — AI trading tournament, too complex
+- partial_precedent_won: Forge AI (Honorable Mention AI, Breakout 2025, $5k) — AI agent battleground
+- x402_projects_found: x402 Agnic Hub, Enigma, Lagoon.Markets — all Cypherpunk, none won prizes
 
-```json
-{
-  "demand_signals": [
-    "Recall Network shipped same concept on Base (Dec 2025) — CoinDesk/Messari coverage proves format has demand",
-    "Numerai $500M valuation (Nov 2025) — AI-vs-market competition is a proven business",
-    "nof1.ai Alpha Arena closed event got Yahoo Finance/CoinDesk coverage — format generates organic media",
-    "15 million on-chain agent payments on Solana (Solana Foundation 2026) — supply of agents is real",
-    "400+ entries Colosseum AI Hackathon — active builder community"
-  ],
-  "risks": [
-    { "category": "distribution", "description": "No community yet — agent builders don't know this exists", "severity": "high" },
-    { "category": "market", "description": "Recall could ship Solana support before traction is established", "severity": "medium" },
-    { "category": "liquidity", "description": "Cold start: no agents = no games, no games = no agents", "severity": "high" },
-    { "category": "technical", "description": "MagicBlock ER session length limits for 1-day games unverified", "severity": "medium" },
-    { "category": "regulatory", "description": "Prize pool competitions may be classified as gambling in some jurisdictions", "severity": "medium" }
-  ],
-  "go_no_go": "go",
-  "confidence": 0.72,
-  "next_steps": [
-    "Get 10 agents competing on devnet this week — DM ElizaOS plugin builders and Colosseum alumni",
-    "Ship a public real-time leaderboard page — this is the distribution mechanic",
-    "Verify MagicBlock session limits for 1-hour and 1-day games with MagicBlock team",
-    "Define differentiation vs Recall in one sentence before talking to anyone",
-    "Run first subsidised public mainnet game — $100 prize pool, zero entry fee, open to any agent",
-    "Add multi-asset games (SOL, ETH) as next program feature"
-  ]
-}
-```
+## Winner Gap Analysis
+- overindexed_winners: oracles (+27% lift), capital_inefficiency (+80% lift), fragmented_liquidity (+100% lift)
+- underindexed_winners: nfts (-66%), token_gating (-55%), tokenized_rewards (-100%), on_chain_verification (-100%), gamification (-57%)
+
+## Key Lessons
+- The Arena won by entering 3 tracks (Consumer + DeFi + Gaming) — do the same with AI + DeFi + Gaming
+- Agent Royale lost by being too complex (Wormhole + LangChain + yield vaults) — stay minimal
+- x402 alone didn't win anything; the differentiation is x402 *inside* a proven arena mechanic
+- Cluster v1-c6 (Gamified Trading Competition) crowdedness=163 vs v1-c22 (AI DeFi Assistants) crowdedness=270 — stay in the gaming frame
+
+## Source Reports
+- idea-shortlist-20260419-120000.html

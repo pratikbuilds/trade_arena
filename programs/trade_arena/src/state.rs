@@ -36,13 +36,14 @@ pub struct Game {
 /// Per-player ephemeral trading state.
 ///
 /// This account is designed to be **delegated** to the MagicBlock ephemeral
-/// rollup after `join_game`, enabling sub-second `open_position` /
-/// `close_position` transactions. Before `end_game` is called, each player
-/// must run `commit_player` to push their final state back to base layer.
+/// rollup after `join_game`, enabling sub-second `trade_position`
+/// transactions. `commit_player` can still be used for early cleanup, but the
+/// normal `end_game` + `commit_game` flow is expected to settle and undelegate
+/// final player state back to base layer.
 ///
 /// Only one net position is tracked at a time (`position_size > 0`).
-/// Reopening in the same direction scales in; opening the opposite direction
-/// reduces, closes, or flips that net position in place.
+/// Reopening in the same direction scales in; reduce and close actions
+/// shrink or flatten that net position in place.
 #[account]
 #[derive(InitSpace)]
 pub struct PlayerState {
@@ -65,6 +66,13 @@ pub struct PlayerState {
 pub enum Side {
     Long,
     Short,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, InitSpace, PartialEq)]
+pub enum TradeAction {
+    Increase { side: Side, notional_usdc: u64 },
+    Reduce { notional_usdc: u64 },
+    CloseAll,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, InitSpace, PartialEq)]

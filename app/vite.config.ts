@@ -5,6 +5,24 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  server: {
+    proxy: {
+      "/api/pyth": {
+        target: "https://pyth.dourolabs.app/v1/fixed_rate@200ms",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/pyth/, ""),
+      },
+    },
+  },
+  preview: {
+    proxy: {
+      "/api/pyth": {
+        target: "https://pyth.dourolabs.app/v1/fixed_rate@200ms",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/pyth/, ""),
+      },
+    },
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

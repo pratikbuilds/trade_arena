@@ -1,5 +1,7 @@
+use crate::constants::{
+    PYTH_LAZER_FULL_VERIFICATION_LEVEL, PYTH_LAZER_MAX_AGE_SECS, PYTH_LAZER_PROGRAM_ID,
+};
 use crate::error::TradeArenaError;
-use crate::state::Side;
 use anchor_lang::prelude::*;
 
 // ── Pyth Lazer / PriceUpdateV2 parsing ────────────────────────────────────────
@@ -30,18 +32,36 @@ use anchor_lang::prelude::*;
 // keeps working unchanged.
 pub const PRICE_UPDATE_V2_DISCRIMINATOR: [u8; 8] = [0xea, 0xa1, 0x0e, 0x24, 0xac, 0xef, 0x0f, 0xe8];
 
-pub fn parse_pyth_price(account: &AccountInfo) -> Result<(i64, i32)> {
+pub fn parse_pyth_price(account: &AccountInfo, now_ts: i64) -> Result<(i64, i32)> {
     let data = account.try_borrow_data()?;
     require!(data.len() >= 134, TradeArenaError::InvalidPriceFeed);
+    require!(
+        account.owner == &PYTH_LAZER_PROGRAM_ID,
+        TradeArenaError::InvalidPriceFeed
+    );
     require!(
         data[0..8] == PRICE_UPDATE_V2_DISCRIMINATOR,
         TradeArenaError::InvalidPriceFeed
     );
 
+    let verification_level = data[40];
     let price = i64::from_le_bytes(data[73..81].try_into().unwrap());
     let expo = i32::from_le_bytes(data[89..93].try_into().unwrap());
+    let publish_time = i64::from_le_bytes(data[93..101].try_into().unwrap());
 
     require!(price > 0, TradeArenaError::InvalidPrice);
+    require!(
+        verification_level == PYTH_LAZER_FULL_VERIFICATION_LEVEL,
+        TradeArenaError::PriceFeedStale
+    );
+
+    let age_secs = now_ts
+        .checked_sub(publish_time)
+        .ok_or(TradeArenaError::MathOverflow)?;
+    require!(
+        age_secs >= 0 && age_secs <= PYTH_LAZER_MAX_AGE_SECS,
+        TradeArenaError::PriceFeedStale
+    );
 
     // Lazer stores expo as positive magnitude; flip sign so the rest of the
     // codebase can keep its "Pyth classic" mental model (expo = -8, etc.).
@@ -102,6 +122,20 @@ pub fn open_cost(size: u64, price: u64) -> Result<u64> {
         .ok_or(TradeArenaError::MathOverflow)? as u64)
 }
 
+/// Convert a USD notional with 6 decimals into base-asset quantity with 6 decimals.
+///
+/// quantity = floor(notional_usdc * 1_000_000 / price)
+pub fn quantity_from_notional(notional_usdc: u64, price: u64) -> Result<u64> {
+    let quantity = (notional_usdc as u128)
+        .checked_mul(1_000_000)
+        .ok_or(TradeArenaError::MathOverflow)?
+        .checked_div(price as u128)
+        .ok_or(TradeArenaError::MathOverflow)? as u64;
+
+    require!(quantity > 0, TradeArenaError::TradeQuantityTooSmall);
+    Ok(quantity)
+}
+
 /// USDC returned when closing a Long at `exit_price`.
 pub fn long_close_return(size: u64, exit_price: u64) -> Result<u64> {
     open_cost(size, exit_price)
@@ -117,29 +151,4 @@ pub fn short_close_return(size: u64, entry_price: u64, exit_price: u64) -> Resul
         return Ok(0); // total loss of collateral (price more than doubled against us)
     }
     Ok(((two_entry - exit) * size as u128 / 1_000_000) as u64)
-}
-
-/// Final portfolio value used by `end_game` to rank players.
-///
-/// Only **closed** positions count — `virtual_usdc` already reflects all
-/// realized gains/losses.  Players with an open position at game end have
-/// their collateral locked and unavailable, penalising them for not closing
-/// in time.  This design:
-///   • eliminates dependence on an oracle at game-end (no MTM needed)
-///   • incentivises players to close before the clock runs out
-///   • is trivially verifiable on-chain with no price feed required
-///
-/// `position_size`, `position_side`, and `entry_price` are retained as
-/// parameters so callers do not need to change their call-sites and the
-/// compiler can catch any future additions to the scoring model.
-#[allow(unused_variables)]
-pub fn compute_final_value(
-    virtual_usdc: u64,
-    position_size: u64,
-    position_side: &Side,
-    entry_price: u64,
-    current_price: u64,
-) -> u64 {
-    // Collateral for open positions stays locked — only cash on hand scores.
-    virtual_usdc
 }

@@ -426,16 +426,6 @@
   resolved "https://registry.yarnpkg.com/@floating-ui/utils/-/utils-0.2.11.tgz#a269e055e40e2f45873bae9d1a2fdccbd314ea3f"
   integrity sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg==
 
-"@fontsource/dm-sans@^5.2.8":
-  version "5.2.8"
-  resolved "https://registry.yarnpkg.com/@fontsource/dm-sans/-/dm-sans-5.2.8.tgz#762968f3aa4408b7886ead18fb3e82b6ce02ef41"
-  integrity sha512-tlovG42m9ESG28WiHpLq3F5umAlm64rv0RkqTbYowRn70e9OlRr5a3yTJhrhrY+k5lftR/OFJjPzOLQzk8EfCA==
-
-"@fontsource/space-mono@^5.2.9":
-  version "5.2.9"
-  resolved "https://registry.yarnpkg.com/@fontsource/space-mono/-/space-mono-5.2.9.tgz#481321c2a6e139e54dbbfdb904af7dae23b4b9f4"
-  integrity sha512-b61faFOHEISQ/pD25G+cfGY9o/WW6lRv6hBQQfpWvEJ4y1V+S4gmth95EVyBE2VL3qDYHeVQ8nBzrplzdXTDDg==
-
 "@hono/node-server@^1.19.9":
   version "1.19.14"
   resolved "https://registry.yarnpkg.com/@hono/node-server/-/node-server-1.19.14.tgz#e30f844bc77e3ce7be442aac3b1f73ad8b58d181"
@@ -1882,6 +1872,11 @@ fs-extra@^11.3.1:
     jsonfile "^6.0.1"
     universalify "^2.0.0"
 
+fsevents@2.3.2:
+  version "2.3.2"
+  resolved "https://registry.yarnpkg.com/fsevents/-/fsevents-2.3.2.tgz#8a526f78b8fdf4623b709e0b975c52c24c02fd1a"
+  integrity sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==
+
 fsevents@~2.3.3:
   version "2.3.3"
   resolved "https://registry.yarnpkg.com/fsevents/-/fsevents-2.3.3.tgz#cac6407785d03675a2a5e1a5305c697b347d90d6"
@@ -2395,6 +2390,11 @@ lines-and-columns@^1.1.6:
   resolved "https://registry.yarnpkg.com/lines-and-columns/-/lines-and-columns-1.2.4.tgz#eca284f75d2965079309dc0ad9255abb2ebc1632"
   integrity sha512-7ylylesZQ/PV29jhEDl3Ufjo6ZX7gCqJr5F7PKrqc93v7fzSymt1BpwEU8nAUXs8qzzvqhbjhK5QZg6Mt/HkBg==
 
+liveline@^0.0.7:
+  version "0.0.7"
+  resolved "https://registry.yarnpkg.com/liveline/-/liveline-0.0.7.tgz#90acc45b9bba7f277238dc1b032648be7aa95d80"
+  integrity sha512-S1Weo1kmefiOCNaW/WFXErqJXlV8A/ldIkIthaOeT57I2ZhqhKLKQDJ1wfabtMSK9vJeU8PeMNHd8Sr8TLByWQ==
+
 locate-path@^6.0.0:
   version "6.0.0"
   resolved "https://registry.yarnpkg.com/locate-path/-/locate-path-6.0.0.tgz#55321eb309febbc59c4801d931a72452a681d286"
@@ -2768,6 +2768,20 @@ pkce-challenge@^5.0.0:
   version "5.0.1"
   resolved "https://registry.yarnpkg.com/pkce-challenge/-/pkce-challenge-5.0.1.tgz#3b4446865b17b1745e9ace2016a31f48ddf6230d"
   integrity sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==
+
+playwright-core@1.59.1:
+  version "1.59.1"
+  resolved "https://registry.yarnpkg.com/playwright-core/-/playwright-core-1.59.1.tgz#d8a2b28bcb8f2bd08ef3df93b02ae83c813244b2"
+  integrity sha512-HBV/RJg81z5BiiZ9yPzIiClYV/QMsDCKUyogwH9p3MCP6IYjUFu/MActgYAvK0oWyV9NlwM3GLBjADyWgydVyg==
+
+playwright@^1.59.1:
+  version "1.59.1"
+  resolved "https://registry.yarnpkg.com/playwright/-/playwright-1.59.1.tgz#f7b0ca61637ae25264cec370df671bbe1f368a4a"
+  integrity sha512-C8oWjPR3F81yljW9o5OxcWzfh6avkVwDD2VYdwIGqTkl+OGFISgypqzfu7dOe4QNLL2aqcWBmI3PMtLIK233lw==
+  dependencies:
+    playwright-core "1.59.1"
+  optionalDependencies:
+    fsevents "2.3.2"
 
 postcss-selector-parser@^7.1.0:
   version "7.1.1"

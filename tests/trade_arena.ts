@@ -14,15 +14,15 @@
 // WHAT THIS TESTS (full game loop)
 // ─────────────────────────────────
 //   create_game  →  join × 2  →  delegate_player × 2  →  delegate_game
-//   → start_game (ER)  →  open_position × 2 (ER)  →  close_position × 2 (ER)
-//   → commit_player × 2 (ER)  →  end_game  →  claim_prize
+//   → start_game (ER)  →  trade_position × N (ER)  →  end_game (ER)
+//   → commit_game (ER)  →  claim_prize
 //
 // KEY CONCEPTS
 // ─────────────
 //   • Two Solana connections are used throughout:
 //       provider.connection   — Devnet (base layer, ~400 ms finality)
 //       erConnection          — MagicBlock ER  (~10-50 ms finality)
-//   • Instructions that touch delegated accounts (open/close/commit)
+//   • Instructions that touch delegated accounts (trade/end/commit)
 //     MUST be sent to the ER endpoint, not devnet.
 //   • ER transactions require manual blockhash + feePayer setup because
 //     the ER is a separate validator with its own recent-blockhash queue.
@@ -33,6 +33,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program, BN } from "@coral-xyz/anchor";
 import { TradeArena } from "../target/types/trade_arena";
+import { createHash } from "crypto";
 import {
   createMint,
   createAssociatedTokenAccount,
@@ -40,9 +41,9 @@ import {
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import {
-  createCommitAndUndelegateInstruction,
   createTopUpEscrowInstruction,
   escrowPdaFromEscrowAuthority,
+  GetCommitmentSignature,
 } from "@magicblock-labs/ephemeral-rollups-sdk";
 import { expect } from "chai";
 
@@ -62,11 +63,15 @@ const DELEGATION_PROGRAM_ID = new anchor.web3.PublicKey(
 
 // MagicBlock devnet ephemeral-rollup RPC endpoint.
 const ER_ENDPOINT = "https://devnet.magicblock.app/";
+const SESSION_KEYS_PROGRAM_ID = new anchor.web3.PublicKey(
+  "KeyspM2ssCJbqUhQ4k7sveSiY4WjnYsrXkC8oDbwde5"
+);
 
 // PDA seeds (must match the Rust constants exactly)
 const GAME_SEED = Buffer.from("game");
 const PLAYER_SEED = Buffer.from("player");
 const VAULT_SEED = Buffer.from("vault");
+const SESSION_TOKEN_SEED = Buffer.from("session_token");
 
 type ParsedPlayerState = {
   virtualUsdc: bigint;
@@ -115,6 +120,22 @@ function findVaultPDA(
     [VAULT_SEED, game.toBuffer()],
     programId
   );
+}
+
+function findSessionTokenPDA(
+  targetProgram: anchor.web3.PublicKey,
+  sessionSigner: anchor.web3.PublicKey,
+  authority: anchor.web3.PublicKey
+): anchor.web3.PublicKey {
+  return anchor.web3.PublicKey.findProgramAddressSync(
+    [
+      SESSION_TOKEN_SEED,
+      targetProgram.toBuffer(),
+      sessionSigner.toBuffer(),
+      authority.toBuffer(),
+    ],
+    SESSION_KEYS_PROGRAM_ID
+  )[0];
 }
 
 // Delegation PDAs — all derived from the delegation program.
@@ -214,6 +235,164 @@ async function confirmERSuccess(
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+async function waitForBaseAccount(
+  baseConnection: anchor.web3.Connection,
+  account: anchor.web3.PublicKey,
+  label: string,
+  timeoutMs = 60_000
+): Promise<anchor.web3.AccountInfo<Buffer>> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const info = await baseConnection.getAccountInfo(account, "confirmed");
+    if (info) return info;
+    await sleep(1_000);
+  }
+
+  throw new Error(`${label} did not appear on base layer in time`);
+}
+
+async function waitForOwner(
+  connection: anchor.web3.Connection,
+  account: anchor.web3.PublicKey,
+  owner: anchor.web3.PublicKey,
+  timeoutMs = 60_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const info = await connection.getAccountInfo(account, "confirmed");
+    if (info?.owner.equals(owner)) return;
+    await sleep(1_000);
+  }
+
+  throw new Error(
+    `${account.toBase58()} did not return to owner ${owner.toBase58()}`
+  );
+}
+
+async function ownerMatches(
+  connection: anchor.web3.Connection,
+  account: anchor.web3.PublicKey,
+  owner: anchor.web3.PublicKey,
+  timeoutMs = 60_000
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const info = await connection.getAccountInfo(account, "confirmed");
+    if (info?.owner.equals(owner)) return true;
+    await sleep(1_000);
+  }
+
+  return false;
+}
+
+async function finalizeUndelegationOnBase(args: {
+  program: Program<TradeArena>;
+  baseConnection: anchor.web3.Connection;
+  erConnection: anchor.web3.Connection;
+  payer: anchor.web3.PublicKey;
+  programId: anchor.web3.PublicKey;
+  baseAccount: anchor.web3.PublicKey;
+  accountSeeds: Buffer[];
+  erScheduleSig: string;
+}): Promise<string | null> {
+  const {
+    program,
+    baseConnection,
+    erConnection,
+    payer,
+    programId,
+    baseAccount,
+    accountSeeds,
+    erScheduleSig,
+  } = args;
+  const buffer = findBufferPDA(baseAccount);
+  let baseCommitSig: string | null = null;
+  try {
+    baseCommitSig = await GetCommitmentSignature(erScheduleSig, erConnection);
+    await baseConnection.confirmTransaction(baseCommitSig, "confirmed");
+  } catch {}
+
+  if (await ownerMatches(baseConnection, baseAccount, programId, 30_000)) {
+    return baseCommitSig;
+  }
+
+  await waitForBaseAccount(
+    baseConnection,
+    buffer,
+    "undelegation buffer",
+    180_000
+  );
+
+  await program.methods
+    .processUndelegation(accountSeeds)
+    .accounts({
+      baseAccount,
+      buffer,
+      payer,
+      systemProgram: anchor.web3.SystemProgram.programId,
+    })
+    .rpc();
+
+  await waitForOwner(baseConnection, baseAccount, programId);
+  return baseCommitSig;
+}
+
+async function createSessionToken(args: {
+  provider: anchor.AnchorProvider;
+  authority: anchor.web3.Keypair;
+  sessionSigner: anchor.web3.Keypair;
+  targetProgram: anchor.web3.PublicKey;
+  validUntil: number;
+  lamports?: number;
+}): Promise<anchor.web3.PublicKey> {
+  const { provider, authority, sessionSigner, targetProgram, validUntil } = args;
+  const lamports = args.lamports ?? 5_000_000;
+  const sessionToken = findSessionTokenPDA(
+    targetProgram,
+    sessionSigner.publicKey,
+    authority.publicKey
+  );
+  const discriminator = createHash("sha256")
+    .update("global:create_session")
+    .digest()
+    .subarray(0, 8);
+  const ix = new anchor.web3.TransactionInstruction({
+    programId: SESSION_KEYS_PROGRAM_ID,
+    keys: [
+      { pubkey: sessionToken, isSigner: false, isWritable: true },
+      { pubkey: sessionSigner.publicKey, isSigner: true, isWritable: true },
+      { pubkey: authority.publicKey, isSigner: true, isWritable: true },
+      { pubkey: targetProgram, isSigner: false, isWritable: false },
+      {
+        pubkey: anchor.web3.SystemProgram.programId,
+        isSigner: false,
+        isWritable: false,
+      },
+    ],
+    data: Buffer.concat([
+      discriminator,
+      Buffer.from([1, 1]),
+      Buffer.from([1]),
+      new BN(validUntil).toArrayLike(Buffer, "le", 8),
+      Buffer.from([1]),
+      new BN(lamports).toArrayLike(Buffer, "le", 8),
+    ]),
+  });
+
+  await provider.sendAndConfirm(new anchor.web3.Transaction().add(ix), [
+    sessionSigner,
+    authority,
+  ]);
+
+  await waitForBaseAccount(
+    provider.connection,
+    sessionToken,
+    "session token account"
+  );
+  return sessionToken;
+}
+
 function parsePlayerStateBuffer(data: Buffer): ParsedPlayerState | null {
   if (data.length < 106) return null;
 
@@ -231,6 +410,10 @@ function parsePlayerStateBuffer(data: Buffer): ParsedPlayerState | null {
   if (virtualUsdc === 0n) return null;
 
   return { virtualUsdc, positionSize, sideFlag, entryPrice, realizedPnl };
+}
+
+function parseGameStartTime(data: Buffer): number {
+  return Number(data.readBigInt64LE(96));
 }
 
 async function fetchDelegatedPlayerState(
@@ -337,6 +520,9 @@ describe("Trade Arena — full devnet game loop", () => {
   let ps2PDA: anchor.web3.PublicKey; // PlayerState for player2
   let p1UsdcATA: anchor.web3.PublicKey; // player1's USDC token account
   let p2UsdcATA: anchor.web3.PublicKey; // player2's USDC token account
+  const player1SessionSigner = anchor.web3.Keypair.generate();
+  let player1SessionToken: anchor.web3.PublicKey;
+  let gameStartUnixTs: number | null = null;
 
   // ── before: fund wallets + create mock USDC ─────────────────────────────
   before("fund players and mint test USDC", async () => {
@@ -523,19 +709,20 @@ describe("Trade Arena — full devnet game loop", () => {
     //
     // Sent to: BASE LAYER
 
-    const ESCROW_TOPUP = 0.02 * anchor.web3.LAMPORTS_PER_SOL; // 0.02 SOL per authority
-
     for (const authority of [
       creatorWallet.publicKey,
       player1.publicKey,
       player2.publicKey,
     ]) {
+      const escrowTopup = authority.equals(creatorWallet.publicKey)
+        ? 0.05 * anchor.web3.LAMPORTS_PER_SOL
+        : 0.02 * anchor.web3.LAMPORTS_PER_SOL;
       const escrow = escrowPdaFromEscrowAuthority(authority);
       const ix = createTopUpEscrowInstruction(
         escrow,
         authority,
         creatorWallet.publicKey, // creator funds the escrow
-        ESCROW_TOPUP
+        escrowTopup
       );
       const tx = new anchor.web3.Transaction().add(ix);
       await provider.sendAndConfirm(tx);
@@ -557,9 +744,9 @@ describe("Trade Arena — full devnet game loop", () => {
   it("3. players delegate their PlayerState to the ephemeral rollup (base layer)", async () => {
     // delegate_player moves account ownership from our program to the
     // Delegation Program.  After this call:
-    //   • open_position / close_position MUST go to the ER endpoint
+    //   • trade_position / end_game MUST go to the ER endpoint
     //   • Trying to fetch the PlayerState with program.account.playerState
-    //     will fail until commit_player returns it to base layer
+    //     may lag while the account is delegated to the ER
     //
     // The #[delegate] macro adds extra accounts to the instruction:
     //   ownerProgram, buffer, delegationRecord, delegationMetadata,
@@ -632,13 +819,14 @@ describe("Trade Arena — full devnet game loop", () => {
       .transaction();
 
     const sig = await sendToER(erConnection, creatorWallet, tx);
-    await erConnection.confirmTransaction(sig, "confirmed");
+    await confirmERSuccess(erConnection, sig);
 
     const gameInfo = await erConnection.getAccountInfo(gamePDA, "confirmed");
     expect(gameInfo).to.not.be.null;
+    gameStartUnixTs = parseGameStartTime(Buffer.from(gameInfo!.data));
     console.log(
       "  ✓ game started at",
-      new Date().toISOString(),
+      new Date(gameStartUnixTs * 1000).toISOString(),
       "— expires in",
       DURATION,
       "s. sig:",
@@ -646,243 +834,181 @@ describe("Trade Arena — full devnet game loop", () => {
     );
   });
 
-  // ── 5. open_position × 2 (ER) ──────────────────────────────────────────────
-  it("5. open_position nets into one position on the Ephemeral Rollup", async () => {
+  // ── 5. trade_position × N (ER) ─────────────────────────────────────────────
+  it("5. trade_position supports increase, reduce, and close-all on the Ephemeral Rollup", async () => {
     const LONG = { long: {} };
     const SHORT = { short: {} };
+    const increase = (
+      side: typeof LONG | typeof SHORT,
+      notionalUsdc: number
+    ) => ({
+      increase: { side, notionalUsdc: new BN(notionalUsdc) },
+    });
+    const reduce = (notionalUsdc: number) => ({
+      reduce: { notionalUsdc: new BN(notionalUsdc) },
+    });
+    const closeAll = () => ({ closeAll: {} });
 
-    async function openOnER(
-      player: anchor.web3.Keypair,
+    async function tradeOnER(
+      signer: anchor.web3.Keypair,
       playerState: anchor.web3.PublicKey,
-      size: BN,
-      side: typeof LONG | typeof SHORT
+      action:
+        | ReturnType<typeof increase>
+        | ReturnType<typeof reduce>
+        | ReturnType<typeof closeAll>,
+      sessionToken: anchor.web3.PublicKey | null = null
     ): Promise<string> {
       const tx = await program.methods
-        .openPosition(size, side)
+        .tradePosition(action)
         .accounts({
-          player: player.publicKey,
           game: gamePDA,
           playerState,
+          sessionToken,
+          signer: signer.publicKey,
           priceFeed: PYTH_LAZER_BTC_USD,
         })
         .transaction();
 
-      const sig = await sendPlayerToER(erConnection, player, tx);
+      const sig = await sendPlayerToER(erConnection, signer, tx);
       await confirmERSuccess(erConnection, sig);
       return sig;
     }
 
+    player1SessionToken = await createSessionToken({
+      provider,
+      authority: player1,
+      sessionSigner: player1SessionSigner,
+      targetProgram: program.programId,
+      validUntil: Math.floor(Date.now() / 1000) + 15 * 60,
+      lamports: 10_000_000,
+    });
+    await sleep(1_500);
+
     const initial = await fetchDelegatedPlayerState(erConnection, ps1PDA);
     expect(Number(initial.positionSize)).to.equal(0);
 
-    const firstLongSig = await openOnER(player1, ps1PDA, new BN(10_000), LONG);
+    const firstLongSig = await tradeOnER(
+      player1SessionSigner,
+      ps1PDA,
+      increase(LONG, 1_000_000_000),
+      player1SessionToken
+    );
     const afterFirstLong = await waitForDelegatedPlayerState(
       erConnection,
       provider.connection,
       ps1PDA,
-      (state) => Number(state.positionSize) === 10_000 && state.sideFlag === 0
+      (state) => Number(state.positionSize) > 0 && state.sideFlag === 0
     );
-    expect(Number(afterFirstLong.positionSize)).to.equal(10_000);
+    expect(Number(afterFirstLong.positionSize)).to.be.greaterThan(0);
     expect(afterFirstLong.sideFlag).to.equal(0);
     expect(Number(afterFirstLong.entryPrice)).to.be.greaterThan(0);
     expect(Number(afterFirstLong.virtualUsdc)).to.be.lessThan(
       Number(initial.virtualUsdc)
     );
 
-    const scaleInSig = await openOnER(player1, ps1PDA, new BN(20_000), LONG);
+    const scaleInSig = await tradeOnER(
+      player1SessionSigner,
+      ps1PDA,
+      increase(LONG, 600_000_000),
+      player1SessionToken
+    );
     const afterScaleIn = await waitForDelegatedPlayerState(
       erConnection,
       provider.connection,
       ps1PDA,
-      (state) => Number(state.positionSize) === 30_000 && state.sideFlag === 0
+      (state) =>
+        Number(state.positionSize) > Number(afterFirstLong.positionSize) &&
+        state.sideFlag === 0
     );
-    expect(Number(afterScaleIn.positionSize)).to.equal(30_000);
+    expect(Number(afterScaleIn.positionSize)).to.be.greaterThan(
+      Number(afterFirstLong.positionSize)
+    );
     expect(afterScaleIn.sideFlag).to.equal(0);
     expect(Number(afterScaleIn.entryPrice)).to.be.greaterThan(0);
     expect(Number(afterScaleIn.virtualUsdc)).to.be.lessThan(
       Number(afterFirstLong.virtualUsdc)
     );
 
-    const reduceSig = await openOnER(player1, ps1PDA, new BN(10_000), SHORT);
+    const reduceSig = await tradeOnER(player1, ps1PDA, reduce(500_000_000));
     const afterReduce = await waitForDelegatedPlayerState(
       erConnection,
       provider.connection,
       ps1PDA,
-      (state) => Number(state.positionSize) === 20_000 && state.sideFlag === 0
+      (state) =>
+        Number(state.positionSize) < Number(afterScaleIn.positionSize) &&
+        state.sideFlag === 0
     );
-    expect(Number(afterReduce.positionSize)).to.equal(20_000);
+    expect(Number(afterReduce.positionSize)).to.be.lessThan(
+      Number(afterScaleIn.positionSize)
+    );
     expect(afterReduce.sideFlag).to.equal(0);
-    expect(afterReduce.entryPrice).to.equal(afterScaleIn.entryPrice);
+    expect(Number(afterReduce.entryPrice)).to.equal(
+      Number(afterScaleIn.entryPrice)
+    );
     expect(Number(afterReduce.virtualUsdc)).to.be.greaterThan(
       Number(afterScaleIn.virtualUsdc)
     );
 
-    const flipSig = await openOnER(player1, ps1PDA, new BN(30_000), SHORT);
-    const afterFlip = await waitForDelegatedPlayerState(
-      erConnection,
-      provider.connection,
-      ps1PDA,
-      (state) => Number(state.positionSize) === 10_000 && state.sideFlag === 1
+    const player2Sig = await tradeOnER(
+      player2,
+      ps2PDA,
+      increase(SHORT, 700_000_000)
     );
-    expect(Number(afterFlip.positionSize)).to.equal(10_000);
-    expect(afterFlip.sideFlag).to.equal(1);
-    expect(Number(afterFlip.entryPrice)).to.be.greaterThan(0);
-
-    const player2Sig = await openOnER(player2, ps2PDA, new BN(10_000), SHORT);
     const player2State = await waitForDelegatedPlayerState(
       erConnection,
       provider.connection,
       ps2PDA,
-      (state) => Number(state.positionSize) === 10_000 && state.sideFlag === 1
+      (state) => Number(state.positionSize) > 0 && state.sideFlag === 1
     );
-    expect(Number(player2State.positionSize)).to.equal(10_000);
+    expect(Number(player2State.positionSize)).to.be.greaterThan(0);
     expect(player2State.sideFlag).to.equal(1);
 
+    const closeAllSig = await tradeOnER(player1, ps1PDA, closeAll());
+    const afterCloseAll = await waitForDelegatedPlayerState(
+      erConnection,
+      provider.connection,
+      ps1PDA,
+      (state) => Number(state.positionSize) === 0
+    );
+    expect(Number(afterCloseAll.positionSize)).to.equal(0);
+    expect(Number(afterCloseAll.virtualUsdc)).to.be.greaterThan(
+      Number(afterReduce.virtualUsdc)
+    );
+
     console.log(
-      "  ✓ player1 netted long -> scale in -> reduce -> flip. sigs:",
+      "  ✓ player1 session-key trade path + direct trade path both succeeded. sigs:",
       firstLongSig.slice(0, 12) + "…",
       scaleInSig.slice(0, 12) + "…",
       reduceSig.slice(0, 12) + "…",
-      flipSig.slice(0, 12) + "…"
+      closeAllSig.slice(0, 12) + "…"
     );
     console.log(
-      "  ✓ player2 opened SHORT for the close_position flow. sig:",
+      "  ✓ player2 opened SHORT and remains open for end_game auto-settlement. sig:",
       player2Sig.slice(0, 12) + "…"
     );
   });
 
-  // ── 6. close_position × 2 (ER) ─────────────────────────────────────────────
-  it("6. players close their positions on the Ephemeral Rollup", async () => {
-    // close_position reads the oracle again, computes PnL (long or short math),
-    // adds the return to virtual_usdc, and clears the position.
-    //
-    // Long  PnL: exit_price × size / 1e6  (profit if price went up)
-    // Short PnL: max((2 × entry − exit) × size / 1e6, 0)  (profit if price fell)
-    //
-    // Sent to: EPHEMERAL ROLLUP
-
-    for (const [player, psAcc] of [
-      [player1, ps1PDA],
-      [player2, ps2PDA],
-    ] as [anchor.web3.Keypair, anchor.web3.PublicKey][]) {
-      const tx = await program.methods
-        .closePosition()
-        .accounts({
-          player: player.publicKey,
-          game: gamePDA,
-          playerState: psAcc,
-          priceFeed: PYTH_LAZER_BTC_USD,
-        })
-        .transaction();
-
-      const sig = await sendPlayerToER(erConnection, player, tx);
-      await confirmERSuccess(erConnection, sig);
-      console.log(
-        "  ✓",
-        player === player1 ? "player1" : "player2",
-        "position closed. sig:",
-        sig.slice(0, 16) + "…"
-      );
-    }
-  });
-
-  // ── 7. commit_player × 2 (ER) ──────────────────────────────────────────────
-  it("7. players commit final ER state back to base layer", async () => {
-    // We use the SDK's createCommitAndUndelegateInstruction directly rather than
-    // going through our program's commit_player instruction. This sends a single
-    // instruction straight to the Magic Program on the ER, which is simpler and
-    // more reliable — no CPI chain, no Anchor account validation in the ER context.
-    //
-    // What happens:
-    //   1. The Magic Program on the ER marks the accounts for undelegation
-    //   2. The MagicBlock sequencer picks up the flagged accounts
-    //   3. The sequencer writes the final ER state back to devnet
-    //   4. Account ownership returns to our program on devnet
-    //
-    // Sent to: EPHEMERAL ROLLUP
-
-    for (const [player, psAcc] of [
-      [player1, ps1PDA],
-      [player2, ps2PDA],
-    ] as [anchor.web3.Keypair, anchor.web3.PublicKey][]) {
-      // commit_player does a CPI from our program to the Magic Program.
-      // The CPI context carries our program's ID as "parent_program_id", which
-      // the Magic Program requires to authorise the commit.
-      //
-      // For this transaction the PLAYER is both the fee payer AND the instruction
-      // signer. MagicBlock examples always use a single signer for ER transactions —
-      // using two different signers (creator + player) causes the ER to silently
-      // drop the transaction.
-      const tx = await program.methods
-        .commitPlayer()
-        .accounts({
-          player: player.publicKey,
-          game: gamePDA,
-          playerState: psAcc,
-          // magicContext and magicProgram are resolved by Anchor from IDL addresses
-        })
-        .transaction();
-
-      tx.feePayer = player.publicKey; // player pays their own ER gas
-      const { blockhash } = await erConnection.getLatestBlockhash("confirmed");
-      tx.recentBlockhash = blockhash;
-      tx.sign(player); // single signer = no drop risk
-
-      const rawSig = await erConnection.sendRawTransaction(tx.serialize(), {
-        skipPreflight: true,
-      });
-      await erConnection.confirmTransaction(rawSig, "confirmed");
-      console.log(
-        "  ✓",
-        player === player1 ? "player1" : "player2",
-        "commit confirmed on ER:",
-        rawSig.slice(0, 16) + "…"
-      );
-    }
-
-    // ── Poll until both accounts are back on base layer ──────────────────────
-    // The MagicBlock sequencer propagates ER → devnet asynchronously.
-    // It typically takes 20–60 s. We poll every 3 s for up to 90 s.
-    console.log("  ⏳ polling for commit propagation to devnet (up to 120 s)…");
-    const deadline = Date.now() + 240_000;
-    const programIdStr = program.programId.toBase58();
-    let returned = false;
-    while (Date.now() < deadline) {
-      await sleep(3_000);
-      const [i1, i2] = await Promise.all([
-        provider.connection.getAccountInfo(ps1PDA),
-        provider.connection.getAccountInfo(ps2PDA),
-      ]);
-      const o1 = i1?.owner.toBase58();
-      const o2 = i2?.owner.toBase58();
-      console.log(
-        `  … ps1 owner: ${o1?.slice(0, 8)}… ps2 owner: ${o2?.slice(0, 8)}…`
-      );
-      if (o1 === programIdStr && o2 === programIdStr) {
-        returned = true;
-        break;
-      }
-    }
-    expect(returned, "accounts did not return to base layer within 90 s").to.be
-      .true;
-    console.log("  ✓ both accounts undelegated — back on base layer");
-  });
-
-  // ── 8. end_game ────────────────────────────────────────────────────────────
-  it("8. creator ends the game on ER and commits Game back to base", async () => {
+  // ── 6. end_game ────────────────────────────────────────────────────────────
+  it("6. creator ends the game on ER and commits Game back to base", async () => {
     console.log("  ⏳ waiting for game window to expire…");
-    await sleep(6_000);
+    const remainingMs = Math.max(
+      0,
+      ((gameStartUnixTs ?? Math.floor(Date.now() / 1000)) + DURATION) * 1_000 -
+        Date.now() +
+        2_500
+    );
+    await sleep(remainingMs);
 
     const endTx = await program.methods
       .endGame()
-      .accounts({ game: gamePDA })
+      .accounts({ game: gamePDA, priceFeed: PYTH_LAZER_BTC_USD })
       .remainingAccounts([
-        { pubkey: ps1PDA, isWritable: false, isSigner: false },
-        { pubkey: ps2PDA, isWritable: false, isSigner: false },
+        { pubkey: ps1PDA, isWritable: true, isSigner: false },
+        { pubkey: ps2PDA, isWritable: true, isSigner: false },
       ])
       .transaction();
     const endSig = await sendToER(erConnection, creatorWallet, endTx);
-    await erConnection.confirmTransaction(endSig, "confirmed");
+    await confirmERSuccess(erConnection, endSig);
     console.log(
       "  ✓ end_game confirmed on ER. sig:",
       endSig.slice(0, 16) + "…"
@@ -894,33 +1020,67 @@ describe("Trade Arena — full devnet game loop", () => {
         payer: creatorWallet.publicKey,
         game: gamePDA,
       })
+      .remainingAccounts([
+        { pubkey: ps1PDA, isWritable: true, isSigner: false },
+        { pubkey: ps2PDA, isWritable: true, isSigner: false },
+      ])
       .transaction();
     const commitSig = await sendToER(erConnection, creatorWallet, commitTx);
-    await erConnection.confirmTransaction(commitSig, "confirmed");
+    await confirmERSuccess(erConnection, commitSig);
     console.log(
       "  ✓ commit_game confirmed on ER. sig:",
       commitSig.slice(0, 16) + "…"
     );
 
-    const deadline = Date.now() + 120_000;
-    const programIdStr = program.programId.toBase58();
-    let returned = false;
-    while (Date.now() < deadline) {
-      await sleep(5_000);
-      const info = await provider.connection.getAccountInfo(gamePDA);
-      const owner = info?.owner.toBase58();
-      console.log(`  … game owner: ${owner?.slice(0, 8)}…`);
-      if (owner === programIdStr) {
-        returned = true;
-        break;
-      }
+    const baseCommitSig = await finalizeUndelegationOnBase({
+      program,
+      baseConnection: provider.connection,
+      erConnection,
+      payer: creatorWallet.publicKey,
+      programId: program.programId,
+      baseAccount: gamePDA,
+      accountSeeds: [
+        GAME_SEED,
+        creatorWallet.publicKey.toBuffer(),
+        u64Le(GAME_ID),
+      ],
+      erScheduleSig: commitSig,
+    });
+    if (baseCommitSig) {
+      console.log("  ✓ base-layer commit observed. sig:", baseCommitSig);
+    } else {
+      console.log(
+        "  ✓ base-layer commit propagated; finalized via undelegation buffer"
+      );
     }
-    expect(returned, "game did not return to base layer within 240 s").to.be
-      .true;
+
+    for (const [player, playerState] of [
+      [player1, ps1PDA],
+      [player2, ps2PDA],
+    ] as [anchor.web3.Keypair, anchor.web3.PublicKey][]) {
+      await finalizeUndelegationOnBase({
+        program,
+        baseConnection: provider.connection,
+        erConnection,
+        payer: creatorWallet.publicKey,
+        programId: program.programId,
+        baseAccount: playerState,
+        accountSeeds: [
+          PLAYER_SEED,
+          gamePDA.toBuffer(),
+          player.publicKey.toBuffer(),
+        ],
+        erScheduleSig: commitSig,
+      });
+    }
 
     const game = await program.account.game.fetch(gamePDA);
     expect(game.status).to.deep.equal({ ended: {} });
     expect(game.winner).to.not.be.null;
+    const finalPs1 = await program.account.playerState.fetch(ps1PDA);
+    const finalPs2 = await program.account.playerState.fetch(ps2PDA);
+    expect(finalPs1.positionSize.toNumber()).to.equal(0);
+    expect(finalPs2.positionSize.toNumber()).to.equal(0);
 
     const winnerStr = (game.winner as anchor.web3.PublicKey).toBase58();
     const isP1 = winnerStr === player1.publicKey.toBase58();
@@ -935,8 +1095,8 @@ describe("Trade Arena — full devnet game loop", () => {
     );
   });
 
-  // ── 9. claim_prize ─────────────────────────────────────────────────────────
-  it("9. winner claims the real USDC prize pool (base layer)", async () => {
+  // ── 7. claim_prize ─────────────────────────────────────────────────────────
+  it("7. winner claims the real USDC prize pool (base layer)", async () => {
     // claim_prize:
     //   1. Checks game.winner == signer
     //   2. Signs a token transfer CPI using the Game PDA as vault authority

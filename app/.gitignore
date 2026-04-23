@@ -22,3 +22,12 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+.agents
+.claude
+.factory
+.kilocode
+.kiro
+.pi
+.windsurf
+skills
+skills-lock.json

@@ -14,7 +14,7 @@ cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
-idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build", "session-keys/idl-build"]
 anchor-debug = []
 custom-heap = []
 custom-panic = []
@@ -25,6 +25,7 @@ testing = []
 anchor-lang = { version = "=0.32.1", features = ["init-if-needed"] }
 anchor-spl = { version = "=0.32.1", features = ["token"] }
 ephemeral-rollups-sdk = { version = "=0.6.5", features = ["anchor", "disable-realloc"] }
+session-keys = { version = "=3.0.11", features = ["no-entrypoint"] }
 
 [dev-dependencies]
 

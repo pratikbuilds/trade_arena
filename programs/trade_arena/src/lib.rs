@@ -56,13 +56,8 @@ pub mod trade_arena {
     }
 
     /// Send to: **Ephemeral Rollup endpoint**.
-    pub fn open_position(ctx: Context<OpenPosition>, size: u64, side: Side) -> Result<()> {
-        open_position::handler(ctx, size, side)
-    }
-
-    /// Send to: **Ephemeral Rollup endpoint**.
-    pub fn close_position(ctx: Context<ClosePosition>) -> Result<()> {
-        close_position::handler(ctx)
+    pub fn trade_position(ctx: Context<TradePosition>, action: TradeAction) -> Result<()> {
+        trade_position::handler(ctx, action)
     }
 
     /// Commit individual player ER state back to base (optional cleanup).
@@ -79,7 +74,9 @@ pub mod trade_arena {
 
     /// Push the final game result from ER to base layer.
     /// Send to: **Ephemeral Rollup endpoint**.
-    pub fn commit_game(ctx: Context<CommitGame>) -> Result<()> {
+    pub fn commit_game<'info>(
+        ctx: Context<'_, '_, '_, 'info, CommitGame<'info>>,
+    ) -> Result<()> {
         commit_game::handler(ctx)
     }
 }

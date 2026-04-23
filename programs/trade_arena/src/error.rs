@@ -26,12 +26,10 @@ pub enum TradeArenaError {
     GameNotEnded,
     #[msg("Unauthorized")]
     Unauthorized,
-    #[msg("Player already has an open position — close it first")]
-    PositionAlreadyOpen,
     #[msg("No open position to close")]
     NoOpenPosition,
-    #[msg("Size must be greater than zero")]
-    InvalidSize,
+    #[msg("Trade notional must be greater than zero")]
+    InvalidNotional,
     #[msg("Insufficient virtual USDC balance")]
     InsufficientVirtualBalance,
     #[msg("Invalid Pyth price feed account")]
@@ -58,4 +56,10 @@ pub enum TradeArenaError {
     NoPrize,
     #[msg("Game timer has run out — no new positions allowed")]
     GameEnded,
+    #[msg("Increase action side does not match the current position")]
+    DirectionMismatch,
+    #[msg("Reduce action exceeds the current open position")]
+    ReduceExceedsPosition,
+    #[msg("Trade notional rounds down to zero quantity at the current price")]
+    TradeQuantityTooSmall,
 }
