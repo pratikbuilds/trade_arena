@@ -1,4 +1,11 @@
-import { AlertCircle, Dot, RefreshCcw } from "lucide-react";
+import {
+  AlertCircle,
+  Bot,
+  Dot,
+  Radio,
+  RefreshCcw,
+  Timer,
+} from "lucide-react";
 import { useState } from "react";
 import { Liveline } from "liveline";
 import type { HoverPoint } from "liveline";
@@ -27,23 +34,436 @@ import {
 
 const MARKET_SYMBOL = "Crypto.BTC/USD";
 const MARKET_LABEL = "BTC / USD";
-const CHART_COLOR = "#4f46e5";
+const CHART_COLOR = "#e6eadb";
+
+type TradeFill = {
+  id: string;
+  kind: "in" | "out";
+  left: string;
+  top: string;
+  price: number;
+};
+
+type AgentSnapshot = {
+  id: string;
+  name: string;
+  status: "Live" | "Idle";
+  side: "Long" | "Short" | "Flat";
+  size: string;
+  pnl: number;
+  equity: number;
+  risk: string;
+  fills: TradeFill[];
+};
+
+function formatSignedUsd(value: number): string {
+  const absolute = formatUsd(Math.abs(value));
+  return value >= 0 ? `+${absolute}` : `-${absolute}`;
+}
+
+function getPositionSnapshot(latestPrice: number) {
+  const entryPrice = latestPrice > 0 ? latestPrice - 2 : 78038;
+  const exitPrice = latestPrice || 78040;
+  const sizeBtc = 0.010251;
+  const notional = entryPrice * sizeBtc;
+  const pnl = (entryPrice - exitPrice) * sizeBtc;
+  const pnlPercent = notional === 0 ? 0 : (pnl / notional) * 100;
+
+  return {
+    entryPrice,
+    exitPrice,
+    notional,
+    pnl,
+    pnlPercent,
+    sizeBtc,
+  };
+}
+
+function StatPill({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  tone?: "neutral" | "positive" | "negative";
+}) {
+  const toneClass =
+    tone === "positive"
+      ? "text-[#9ad48c]"
+      : tone === "negative"
+        ? "text-[#d98585]"
+        : "text-foreground";
+
+  return (
+    <div className="min-w-0 rounded-[4px] border border-border/70 bg-background/45 px-2.5 py-2 shadow-[inset_0_1px_0_rgb(255_255_255/0.02)]">
+      <p className="text-[10px] font-semibold uppercase text-muted-foreground">{label}</p>
+      <p className={`mt-0.5 truncate font-mono text-sm font-semibold ${toneClass}`}>{value}</p>
+    </div>
+  );
+}
+
+function TradeExecutionOverlay({
+  agent,
+}: {
+  agent: AgentSnapshot;
+}) {
+  const isLoss = agent.pnl < 0;
+  const inCount = agent.fills.filter((fill) => fill.kind === "in").length;
+  const outCount = agent.fills.filter((fill) => fill.kind === "out").length;
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-10">
+      <div className="absolute left-3 top-12 flex max-w-[calc(100%-1.5rem)] items-center gap-3 rounded-[4px] border border-border/75 bg-background/82 px-3 py-2 text-[11px] font-medium text-muted-foreground shadow-[0_12px_40px_rgb(0_0_0/0.24)] backdrop-blur sm:left-4">
+        <span className="font-semibold text-foreground">{agent.name}</span>
+        <span className="h-3 w-px bg-border" />
+        <span className="inline-flex items-center gap-1.5">
+          <span className="size-2 rounded-full bg-primary" />
+          Entry {inCount}
+        </span>
+        <span className="h-3 w-px bg-border" />
+        <span className="inline-flex items-center gap-1.5">
+          <span className="size-2 rounded-full bg-[#d98585]" />
+          Exit {outCount}
+        </span>
+        <span className={`hidden font-mono sm:inline ${isLoss ? "text-[#d98585]" : "text-[#9ad48c]"}`}>
+          {formatSignedUsd(agent.pnl)}
+        </span>
+      </div>
+
+      {agent.fills.map((fill) => {
+        const isEntry = fill.kind === "in";
+
+        return (
+          <div
+            key={fill.id}
+            className="group pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2"
+            style={{ left: fill.left, top: fill.top }}
+          >
+            <div className="flex flex-col items-center">
+              <span
+                className={`h-4 w-px ${
+                  isEntry ? "bg-primary/75" : "bg-[#d98585]/75"
+                } ${isEntry ? "order-2" : "order-1"}`}
+              />
+              <span
+                className={`order-2 flex size-4 items-center justify-center rounded-full border-2 border-background shadow-[0_0_18px_rgb(230_234_219/0.10)] ${
+                  isEntry ? "bg-primary" : "bg-[#d98585]"
+                }`}
+              >
+                <span className="size-1.5 rounded-full bg-background" />
+              </span>
+              <span className={`hidden rounded-[4px] border bg-background/94 px-1.5 py-0.5 font-mono text-[10px] font-semibold shadow-sm backdrop-blur group-hover:block ${isEntry ? "order-3 mt-1 border-primary/25 text-primary" : "order-0 mb-1 border-[#d98585]/25 text-[#d98585]"}`}>
+                {isEntry ? "ENTRY" : "EXIT"}
+              </span>
+              <span className="absolute left-1/2 top-full mt-5 hidden -translate-x-1/2 whitespace-nowrap rounded-[4px] border border-border bg-background/96 px-2 py-1 font-mono text-[11px] font-semibold text-foreground shadow-md group-hover:block">
+                {isEntry ? "Entry" : "Exit"} {formatUsd(fill.price)}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+
+    </div>
+  );
+}
+
+function AgentSidebar({
+  agents,
+  latestPrice,
+  selectedAgentId,
+  selectedWindowLabel,
+  onSelectAgent,
+}: {
+  agents: AgentSnapshot[];
+  latestPrice: number;
+  selectedAgentId: string;
+  selectedWindowLabel: string;
+  onSelectAgent: (id: string) => void;
+}) {
+  const liveCount = agents.filter((agent) => agent.status === "Live").length;
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0];
+
+  return (
+    <aside className="flex h-full min-h-[430px] flex-col border-t border-border/65 bg-card/88 lg:min-h-[500px] lg:border-l lg:border-t-0">
+      <div className="border-b border-border/65 px-3 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-[4px] border border-border/70 bg-background/55">
+              <Bot aria-hidden="true" className="size-4 text-primary" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">Agents</p>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                Watching {selectedAgent.name}
+              </p>
+            </div>
+          </div>
+          <Badge variant="outline" className="border-border/70 bg-background/45 font-mono text-muted-foreground">
+            <Radio aria-hidden="true" data-icon="inline-start" className="text-[#9ad48c]" />
+            {liveCount}/{agents.length}
+          </Badge>
+        </div>
+      </div>
+
+      <div className="grid flex-1 content-start gap-1 px-2 py-2">
+        {agents.map((agent) => {
+          const isPositive = agent.pnl >= 0;
+          const isSelected = agent.id === selectedAgentId;
+          const rank = [...agents]
+            .sort((a, b) => b.equity - a.equity)
+            .findIndex((rankedAgent) => rankedAgent.id === agent.id) + 1;
+
+          return (
+            <button
+              key={agent.id}
+              aria-pressed={isSelected}
+              className={`relative grid w-full grid-cols-[minmax(0,1fr)_auto] gap-2 overflow-hidden rounded-[4px] px-2.5 py-2.5 text-left transition-colors hover:bg-muted/35 ${
+                isSelected
+                  ? "bg-muted/50 before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-primary"
+                  : "bg-transparent"
+              }`}
+              onClick={() => onSelectAgent(agent.id)}
+              type="button"
+            >
+              <span className="min-w-0">
+                <span className="flex items-center gap-2">
+                  <span className="relative flex size-7 shrink-0 items-center justify-center rounded-[4px] border border-border/60 bg-background/45">
+                    <Bot aria-hidden="true" className="size-3.5 text-muted-foreground" />
+                    <span
+                      className={
+                        agent.status === "Live"
+                          ? "absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-[#9ad48c] shadow-[0_0_10px_rgb(154_212_140/0.75)]"
+                          : "absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-muted-foreground/45"
+                      }
+                    />
+                  </span>
+                  <span className="truncate text-sm font-semibold">{agent.name}</span>
+                  <span className="font-mono text-[10px] text-muted-foreground">#{rank}</span>
+                </span>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  {agent.side} · {agent.risk} risk · {agent.status}
+                </span>
+              </span>
+
+              <span className="text-right">
+                <span className={`block font-mono text-sm font-semibold ${isPositive ? "text-[#9ad48c]" : "text-[#d98585]"}`}>
+                  {formatSignedUsd(agent.pnl)}
+                </span>
+                <span className="mt-1 block font-mono text-xs text-muted-foreground">
+                  {formatUsd(agent.equity)}
+                </span>
+              </span>
+
+              <span className="col-span-2 grid grid-cols-[1fr_auto] gap-2 text-[10px] text-muted-foreground">
+                <span className="truncate font-mono">
+                  {agent.size} BTC · {agent.fills.filter((fill) => fill.kind === "in").length} in /{" "}
+                  {agent.fills.filter((fill) => fill.kind === "out").length} out
+                </span>
+                <span className="font-mono">{selectedWindowLabel}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-auto border-t border-border/65 p-2">
+        <div className="rounded-[4px] bg-background/35 px-3 py-2.5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase text-muted-foreground">Viewing</p>
+              <p className="mt-1 flex items-center gap-2 truncate text-sm font-semibold">
+                <Bot aria-hidden="true" className="size-3.5 text-primary" />
+                {selectedAgent.name}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className={`font-mono text-sm font-semibold ${selectedAgent.pnl >= 0 ? "text-[#9ad48c]" : "text-[#d98585]"}`}>
+                {formatSignedUsd(selectedAgent.pnl)}
+              </p>
+              <p className="mt-1 font-mono text-xs text-muted-foreground">{formatUsd(latestPrice)}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+}
 
 function ChartLoadingState() {
   return (
-    <Card className="border border-border/70 bg-card py-0 shadow-none">
-      <CardContent className="grid gap-4 py-4">
-        <Skeleton className="h-12 rounded-xl" />
-        <Skeleton className="h-[520px] rounded-[28px]" />
-        <Skeleton className="h-10 rounded-xl" />
-      </CardContent>
-    </Card>
+    <section className="mx-auto flex min-h-0 w-full flex-1">
+      <Card
+        aria-busy="true"
+        aria-label="Loading market chart"
+        className="relative h-full min-h-0 w-full rounded-[4px] border border-border/75 bg-card/95 py-0 shadow-[0_18px_70px_rgb(0_0_0/0.30)] before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-primary/20"
+      >
+        <CardHeader className="gap-2.5 border-b border-border/70 bg-background/20 py-2.5">
+          <div className="grid gap-3 xl:grid-cols-[minmax(260px,0.8fr)_minmax(410px,1.15fr)_minmax(270px,0.62fr)_auto] xl:items-center">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <Skeleton className="h-6 w-24 border border-primary/10 bg-primary/10" />
+                <Skeleton className="h-3 w-9 bg-muted/35" />
+                <Skeleton className="h-3 w-24 bg-muted/35" />
+              </div>
+              <div className="mt-2 space-y-1">
+                <Skeleton className="h-3 w-20 bg-muted/35" />
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <Skeleton className="h-10 w-52 bg-muted/55" />
+                  <Skeleton className="h-4 w-16 bg-[#9ad48c]/15" />
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {["w-14", "w-16", "w-20", "w-14"].map((width, index) => (
+                <div
+                  key={index}
+                  className="min-w-0 rounded-[4px] border border-border/70 bg-background/45 px-2.5 py-2 shadow-[inset_0_1px_0_rgb(255_255_255/0.02)]"
+                >
+                  <Skeleton className="h-2.5 w-12 bg-muted/35" />
+                  <Skeleton className={`mt-2 h-4 ${width} bg-muted/55`} />
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-3 overflow-hidden rounded-[4px] border border-border/65 bg-background/45 text-xs sm:max-xl:max-w-xl">
+              {[0, 1, 2].map((item) => (
+                <div key={item} className={item === 0 ? "px-3 py-2" : "border-l border-border/60 px-3 py-2"}>
+                  <Skeleton className="h-2.5 w-12 bg-muted/35" />
+                  <Skeleton className="mt-2 h-4 w-14 bg-muted/55" />
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-end">
+              <Skeleton className="size-8 border border-border/65 bg-background/45" />
+            </div>
+          </div>
+        </CardHeader>
+
+        <CardContent className="min-h-0 flex-1 p-0">
+          <div className="grid h-full min-h-0 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="p-2">
+              <div className="relative h-full min-h-[360px] w-full overflow-hidden rounded-[4px] border border-border/65 bg-background shadow-[inset_0_0_0_1px_rgb(255_255_255/0.012)]">
+                <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-4 px-3 py-3">
+                  <Skeleton className="h-3 w-24 bg-muted/35" />
+                  <Skeleton className="h-6 w-28 border border-border/40 bg-card/70" />
+                </div>
+
+                <div className="absolute inset-x-4 bottom-[72px] top-[74px]">
+                  <div className="absolute inset-0 bg-[linear-gradient(rgba(217,232,217,0.045)_1px,transparent_1px),linear-gradient(90deg,rgba(217,232,217,0.045)_1px,transparent_1px)] bg-[size:100%_20%,12.5%_100%]" />
+                  <svg
+                    aria-hidden="true"
+                    className="absolute inset-0 h-full w-full text-primary/30"
+                    preserveAspectRatio="none"
+                    viewBox="0 0 100 100"
+                  >
+                    <path
+                      d="M0 66 C 10 62, 16 70, 24 54 S 39 48, 47 45 S 59 25, 68 33 S 82 50, 100 38"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeLinecap="round"
+                      strokeWidth="1.25"
+                    />
+                  </svg>
+                  <div className="absolute left-[16%] top-[67%] size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-primary shadow-[0_0_18px_rgb(230_234_219/0.10)]" />
+                  <div className="absolute left-[42%] top-[58%] size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-primary shadow-[0_0_18px_rgb(230_234_219/0.10)]" />
+                  <div className="absolute left-[57%] top-[42%] size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-[#d98585] shadow-[0_0_18px_rgb(217_133_133/0.12)]" />
+                  <div className="absolute left-[76%] top-[55%] size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-[#d98585] shadow-[0_0_18px_rgb(217_133_133/0.12)]" />
+                </div>
+
+                <div className="absolute left-3 top-12 z-10 flex max-w-[calc(100%-1.5rem)] items-center gap-3 rounded-[4px] border border-border/75 bg-background/82 px-3 py-2 shadow-[0_12px_40px_rgb(0_0_0/0.24)] backdrop-blur sm:left-4">
+                  <Skeleton className="h-3 w-12 bg-muted/55" />
+                  <span className="h-3 w-px bg-border" />
+                  <Skeleton className="h-3 w-16 bg-primary/15" />
+                  <span className="h-3 w-px bg-border" />
+                  <Skeleton className="h-3 w-14 bg-[#d98585]/15" />
+                </div>
+
+                <div className="absolute bottom-3 left-3 right-3 grid grid-cols-4 gap-2 sm:left-auto sm:w-[410px]">
+                  {[0, 1, 2, 3].map((item) => (
+                    <Skeleton key={item} className="h-7 border border-border/40 bg-card/70" />
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <aside className="flex h-full min-h-[430px] flex-col border-t border-border/65 bg-card/88 lg:min-h-[500px] lg:border-l lg:border-t-0">
+              <div className="border-b border-border/65 px-3 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <div className="flex size-8 shrink-0 items-center justify-center rounded-[4px] border border-border/70 bg-background/55">
+                      <Bot aria-hidden="true" className="size-4 text-primary/60" />
+                    </div>
+                    <div className="min-w-0">
+                      <Skeleton className="h-4 w-16 bg-muted/55" />
+                      <Skeleton className="mt-2 h-3 w-28 bg-muted/35" />
+                    </div>
+                  </div>
+                  <div className="flex h-6 items-center gap-1.5 rounded-[4px] border border-border/70 bg-background/45 px-2">
+                    <Radio aria-hidden="true" className="size-3 text-[#9ad48c]/60" />
+                    <Skeleton className="h-3 w-8 bg-muted/45" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid flex-1 content-start gap-1 px-2 py-2">
+                {[0, 1, 2].map((item) => (
+                  <div
+                    key={item}
+                    className={`relative grid w-full grid-cols-[minmax(0,1fr)_auto] gap-2 overflow-hidden rounded-[4px] px-2.5 py-2.5 ${
+                      item === 0
+                        ? "bg-muted/50 before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-primary"
+                        : ""
+                    }`}
+                  >
+                    <span className="min-w-0">
+                      <span className="flex items-center gap-2">
+                        <Skeleton className="size-7 shrink-0 border border-border/60 bg-background/45" />
+                        <Skeleton className="h-4 w-16 bg-muted/55" />
+                        <Skeleton className="h-3 w-6 bg-muted/35" />
+                      </span>
+                      <Skeleton className="mt-2 h-3 w-32 bg-muted/35" />
+                    </span>
+                    <span className="min-w-16 text-right">
+                      <Skeleton className={`ml-auto h-4 w-14 ${item === 1 ? "bg-[#9ad48c]/15" : "bg-[#d98585]/15"}`} />
+                      <Skeleton className="ml-auto mt-2 h-3 w-16 bg-muted/35" />
+                    </span>
+                    <span className="col-span-2 grid grid-cols-[1fr_auto] gap-2">
+                      <Skeleton className="h-3 w-36 bg-muted/35" />
+                      <Skeleton className="h-3 w-10 bg-muted/35" />
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-auto border-t border-border/65 p-2">
+                <div className="rounded-[4px] bg-background/35 px-3 py-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <Skeleton className="h-2.5 w-14 bg-muted/35" />
+                      <Skeleton className="mt-2 h-4 w-24 bg-muted/55" />
+                    </div>
+                    <div className="min-w-20 text-right">
+                      <Skeleton className="ml-auto h-4 w-14 bg-[#d98585]/15" />
+                      <Skeleton className="ml-auto mt-2 h-3 w-16 bg-muted/35" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
 export function MarketChart() {
   const [hoverPoint, setHoverPoint] = useState<HoverPoint | null>(null);
   const [displayMode, setDisplayMode] = useState<"line" | "candle">("candle");
+  const [selectedAgentId, setSelectedAgentId] = useState("atlas");
   const { candles, error, lastUpdatedAt, retry, selectedWindow, setSelectedWindow, status } =
     usePythChart({
       symbol: MARKET_SYMBOL,
@@ -58,6 +478,56 @@ export function MarketChart() {
   const hoverValue = hoverPoint?.value ?? latestPrice;
   const hoverTime = hoverPoint?.time ?? liveCandle?.time ?? committed.at(-1)?.time ?? null;
   const syncLabel = lastUpdatedAt ? formatTimestamp(Math.floor(lastUpdatedAt / 1000)) : "Pending";
+  const position = getPositionSnapshot(latestPrice);
+  const agents: AgentSnapshot[] = [
+    {
+      id: "atlas",
+      name: "Atlas",
+      status: "Live",
+      side: "Short",
+      size: position.sizeBtc.toFixed(5),
+      pnl: position.pnl,
+      equity: 9999.98,
+      risk: "18%",
+      fills: [
+        { id: "atlas-entry-1", kind: "in", left: "16%", top: "67%", price: position.entryPrice - 6 },
+        { id: "atlas-entry-2", kind: "in", left: "42%", top: "58%", price: position.entryPrice - 2 },
+        { id: "atlas-exit-1", kind: "out", left: "57%", top: "42%", price: position.exitPrice + 9 },
+        { id: "atlas-entry-3", kind: "in", left: "70%", top: "49%", price: position.entryPrice + 4 },
+        { id: "atlas-exit-2", kind: "out", left: "76%", top: "55%", price: position.exitPrice },
+      ],
+    },
+    {
+      id: "nova",
+      name: "Nova",
+      status: "Live",
+      side: "Long",
+      size: "0.00680",
+      pnl: 14.82,
+      equity: 10014.82,
+      risk: "11%",
+      fills: [
+        { id: "nova-entry-1", kind: "in", left: "21%", top: "45%", price: latestPrice - 28 },
+        { id: "nova-entry-2", kind: "in", left: "49%", top: "53%", price: latestPrice - 12 },
+        { id: "nova-exit-1", kind: "out", left: "74%", top: "37%", price: latestPrice + 7 },
+      ],
+    },
+    {
+      id: "kite",
+      name: "Kite",
+      status: "Idle",
+      side: "Flat",
+      size: "0.00000",
+      pnl: -3.46,
+      equity: 9996.54,
+      risk: "0%",
+      fills: [
+        { id: "kite-entry-1", kind: "in", left: "35%", top: "62%", price: latestPrice - 18 },
+        { id: "kite-exit-1", kind: "out", left: "62%", top: "48%", price: latestPrice - 21 },
+      ],
+    },
+  ];
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0];
 
   if (status === "loading" && candles.length === 0) {
     return <ChartLoadingState />;
@@ -65,8 +535,8 @@ export function MarketChart() {
 
   if (status === "error" && candles.length === 0) {
     return (
-      <Card className="border border-border/70 bg-card py-0 shadow-none">
-        <CardHeader className="border-b border-border/70 py-6">
+      <Card className="rounded-[4px] border border-border/80 bg-card py-0 shadow-none">
+        <CardHeader className="border-b border-border/80 py-6">
           <CardTitle className="flex items-center gap-2 text-2xl">
             <AlertCircle aria-hidden="true" className="size-5 text-destructive" />
             Couldn&apos;t load the chart
@@ -87,8 +557,8 @@ export function MarketChart() {
 
   if (status === "empty") {
     return (
-      <Card className="border border-border/70 bg-card py-0 shadow-none">
-        <CardHeader className="border-b border-border/70 py-6">
+      <Card className="rounded-[4px] border border-border/80 bg-card py-0 shadow-none">
+        <CardHeader className="border-b border-border/80 py-6">
           <CardTitle className="text-2xl">No chart data yet</CardTitle>
           <CardDescription>
             Pyth returned an empty history window for {MARKET_LABEL}. Retry in a moment.
@@ -105,125 +575,148 @@ export function MarketChart() {
   }
 
   return (
-    <section className="mx-auto grid max-w-[1180px] gap-4 lg:grid-cols-[minmax(0,860px)_1fr]">
-      <Card className="border border-border/70 bg-card py-0 shadow-none lg:col-start-1">
-        <CardHeader className="gap-4 border-b border-border/70 py-4">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div className="flex flex-col gap-3">
+    <section className="mx-auto flex min-h-0 w-full flex-1">
+      <Card className="relative h-full min-h-0 w-full rounded-[4px] border border-border/75 bg-card/95 py-0 shadow-[0_18px_70px_rgb(0_0_0/0.30)] before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-primary/20">
+        <CardHeader className="gap-2.5 border-b border-border/70 bg-background/20 py-2.5">
+          <div className="grid gap-3 xl:grid-cols-[minmax(260px,0.8fr)_minmax(410px,1.15fr)_minmax(270px,0.62fr)_auto] xl:items-center">
+            <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline">{MARKET_LABEL}</Badge>
-                <span className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                  Pyth
-                </span>
+                <Badge variant="outline" className="border-primary/25 bg-primary/10 text-primary">
+                  {MARKET_LABEL}
+                </Badge>
+                <span className="text-xs uppercase text-muted-foreground">Pyth</span>
                 <span className="flex items-center text-xs text-muted-foreground">
                   <Dot aria-hidden="true" className="-mx-1 size-5 text-primary" />
                   Sync {syncLabel}
                 </span>
               </div>
-
-              <div className="flex flex-wrap items-end gap-x-5 gap-y-2">
-                <div className="space-y-1">
-                  <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                    Last price
-                  </p>
-                  <div className="flex items-baseline gap-3">
-                    <CardTitle className="text-4xl font-semibold tracking-tight">
-                      {formatUsd(hoverValue)}
-                    </CardTitle>
-                    <span
-                      className={
-                        priceDeltaPositive ? "text-sm font-medium text-secondary" : "text-sm font-medium text-destructive"
-                      }
-                    >
-                      {priceDelta}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-                  <span>Window {selectedWindow.label}</span>
-                  <span>Interval {selectedWindow.intervalLabel}</span>
-                  <span>{hoverTime ? formatTimestamp(hoverTime) : "Waiting for ticks"}</span>
+              <div className="mt-2 space-y-1">
+                <p className="text-[11px] font-semibold uppercase text-muted-foreground">Last price</p>
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <CardTitle className="font-mono text-4xl font-semibold leading-none sm:text-[40px]">
+                    {formatUsd(hoverValue)}
+                  </CardTitle>
+                  <span
+                    className={
+                      priceDeltaPositive ? "text-sm font-medium text-[#9ad48c]" : "text-sm font-medium text-[#d98585]"
+                    }
+                  >
+                    {priceDelta}
+                  </span>
                 </div>
               </div>
             </div>
 
-            <Button aria-label="Refresh chart data" onClick={retry} size="icon-sm" variant="outline">
-              <RefreshCcw aria-hidden="true" />
-            </Button>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <StatPill label="Window" value={selectedWindow.label} />
+              <StatPill label="Interval" value={selectedWindow.intervalLabel.replace(" candles", "")} />
+              <StatPill label="Hover" value={hoverTime ? formatTimestamp(hoverTime) : "Pending"} />
+              <StatPill
+                label={selectedAgent.name}
+                tone={selectedAgent.pnl >= 0 ? "positive" : "negative"}
+                value={formatSignedUsd(selectedAgent.pnl)}
+              />
+            </div>
+
+            <div className="grid grid-cols-3 overflow-hidden rounded-[4px] border border-border/65 bg-background/45 text-xs sm:max-xl:max-w-xl">
+              <div className="px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase text-muted-foreground">Clock</p>
+                <p className="mt-1 flex items-center gap-1.5 font-mono text-sm font-semibold text-foreground">
+                  <Timer aria-hidden="true" className="size-3.5 text-primary" />
+                  18:42
+                </p>
+              </div>
+              <div className="border-l border-border/60 px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase text-muted-foreground">Live</p>
+                <p className="mt-1 flex items-center gap-1.5 font-mono text-sm font-semibold text-foreground">
+                  <Radio aria-hidden="true" className="size-3.5 text-[#9ad48c]" />
+                  2/3
+                </p>
+              </div>
+              <div className="border-l border-border/60 px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase text-muted-foreground">Leader</p>
+                <p className="mt-1 truncate font-mono text-sm font-semibold text-[#9ad48c]">Nova</p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end">
+              <Button aria-label="Refresh chart data" onClick={retry} size="icon-sm" variant="outline">
+                <RefreshCcw aria-hidden="true" />
+              </Button>
+            </div>
           </div>
         </CardHeader>
 
-        <CardContent className="grid gap-4 py-4">
-          <div className="rounded-[26px] border border-border/70 bg-[linear-gradient(180deg,color-mix(in_oklab,var(--background)_90%,white),var(--background))] p-2 sm:p-2.5">
-            <div className="h-[340px] w-full sm:h-[390px]">
-              <Liveline
-                badge
-                badgeVariant="minimal"
-                candleWidth={selectedWindow.candleWidth}
-                candles={committed}
-                color={CHART_COLOR}
-                data={lineData}
-                emptyText="Waiting for Pyth candles"
-                fill={false}
-                formatTime={formatChartTimestamp}
-                formatValue={formatAxisUsd}
-                grid
-                lineData={lineData}
-                lineMode={displayMode === "line"}
-                lineValue={latestPrice}
-                liveCandle={liveCandle ?? undefined}
-                mode="candle"
-                momentum
-                onHover={setHoverPoint}
-                onModeChange={setDisplayMode}
-                onWindowChange={(secs) => {
-                  const nextWindow = CHART_WINDOWS.find((entry) => entry.secs === secs);
-                  if (nextWindow) {
-                    setSelectedWindow(nextWindow);
-                  }
-                }}
-                padding={{ top: 18, right: 64, bottom: 52, left: 10 }}
-                pulse
-                scrub
-                showValue={false}
-                theme="light"
-                tooltipY={18}
-                value={latestPrice}
-                window={selectedWindow.secs}
-                windows={CHART_WINDOWS.map(({ label, secs }) => ({ label, secs }))}
-                windowStyle="rounded"
-              />
-            </div>
-          </div>
-
-          <div className="rounded-[18px] border border-border/60 bg-muted/[0.32] px-4 py-3">
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground/90">
-              <span className="text-foreground/80">Feed {MARKET_SYMBOL}</span>
-              <span>Mode {displayMode}</span>
-              <span>Live edge 700ms</span>
-              <span className="inline-flex items-center gap-2">
-                <span className="size-1.5 rounded-full bg-primary/85" />
-                Proxy active
-              </span>
-            </div>
-          </div>
-
-          {status === "error" && candles.length > 0 ? (
-            <div className="flex items-start gap-3 rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm">
-              <AlertCircle aria-hidden="true" className="mt-0.5 size-4 text-destructive" />
-              <div className="space-y-1">
-                <p className="font-medium text-foreground">Live refresh slipped.</p>
-                <p className="text-muted-foreground">
-                  {error ?? "The chart is still showing the last successful snapshot."}
-                </p>
+        <CardContent className="min-h-0 flex-1 p-0">
+          <div className="grid h-full min-h-0 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="p-2">
+              <div className="relative h-full min-h-[360px] w-full overflow-hidden rounded-[4px] border border-border/65 bg-background shadow-[inset_0_0_0_1px_rgb(255_255_255/0.012)]">
+                <div className="h-full pt-3">
+                  <Liveline
+                    badge={false}
+                    badgeVariant="minimal"
+                    candleWidth={selectedWindow.candleWidth}
+                    candles={committed}
+                    color={CHART_COLOR}
+                    data={lineData}
+                    emptyText="Waiting for Pyth candles"
+                    fill={false}
+                    formatTime={formatChartTimestamp}
+                    formatValue={formatAxisUsd}
+                    grid
+                    lineData={lineData}
+                    lineMode={displayMode === "line"}
+                    lineValue={latestPrice}
+                    liveCandle={liveCandle ?? undefined}
+                    mode="candle"
+                    momentum
+                    onHover={setHoverPoint}
+                    onModeChange={setDisplayMode}
+                    onWindowChange={(secs) => {
+                      const nextWindow = CHART_WINDOWS.find((entry) => entry.secs === secs);
+                      if (nextWindow) {
+                        setSelectedWindow(nextWindow);
+                      }
+                    }}
+                    padding={{ top: 44, right: 82, bottom: 72, left: 22 }}
+                    pulse
+                    scrub
+                    showValue={false}
+                    style={{ height: "calc(100% - 42px)" }}
+                    theme="dark"
+                    tooltipY={18}
+                    value={latestPrice}
+                    window={selectedWindow.secs}
+                    windows={CHART_WINDOWS.map(({ label, secs }) => ({ label, secs }))}
+                    windowStyle="rounded"
+                  />
+                </div>
+                <TradeExecutionOverlay agent={selectedAgent} />
               </div>
+
+              {status === "error" && candles.length > 0 ? (
+                <div className="flex items-start gap-3 rounded-[4px] border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
+                  <AlertCircle aria-hidden="true" className="mt-0.5 size-4 text-destructive" />
+                  <div className="space-y-1">
+                    <p className="font-medium text-foreground">Live refresh slipped.</p>
+                    <p className="text-muted-foreground">
+                      {error ?? "The chart is still showing the last successful snapshot."}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
             </div>
-          ) : null}
+
+            <AgentSidebar
+              agents={agents}
+              latestPrice={latestPrice}
+              selectedAgentId={selectedAgent.id}
+              selectedWindowLabel={selectedWindow.label}
+              onSelectAgent={setSelectedAgentId}
+            />
+          </div>
         </CardContent>
       </Card>
-
-      <div aria-hidden="true" className="hidden lg:block" />
     </section>
   );
 }
