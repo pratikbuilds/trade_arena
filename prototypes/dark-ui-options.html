@@ -1,0 +1,1038 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Trade Arena Chrome Explorations</title>
+    <style>
+      @font-face {
+        font-family: "Geist";
+        src: url("../app/src/assets/fonts/Geist-Variable.woff2") format("woff2");
+        font-weight: 100 900;
+      }
+
+      @font-face {
+        font-family: "Geist Mono";
+        src: url("../app/src/assets/fonts/GeistMono-Variable.woff2") format("woff2");
+        font-weight: 100 900;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      :root {
+        --bg: #050705;
+        --panel: #0c100d;
+        --panel-2: #101610;
+        --panel-3: #151d16;
+        --chart: #070a07;
+        --text: #f1f6f1;
+        --muted: #839083;
+        --soft: #abb6ab;
+        --line: rgba(217, 232, 217, 0.13);
+        --line-strong: rgba(230, 234, 219, 0.28);
+        --primary: #e6eadb;
+        --good: #9ad48c;
+        --bad: #d98585;
+        --warn: #d8c58d;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Geist", sans-serif;
+      }
+
+      button {
+        font: inherit;
+      }
+
+      .page {
+        min-height: 100vh;
+        padding: 28px;
+      }
+
+      .intro {
+        max-width: 1480px;
+        margin: 0 auto 22px;
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 24px;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 18px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 25px;
+        font-weight: 760;
+      }
+
+      .intro p {
+        margin: 7px 0 0;
+        max-width: 760px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .note {
+        color: var(--soft);
+        font: 720 11px "Geist Mono", monospace;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .options {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(520px, 1fr));
+        gap: 20px;
+        max-width: 1480px;
+        margin: 0 auto;
+      }
+
+      .option-label {
+        margin: 0 0 10px;
+        color: var(--text);
+        font-size: 13px;
+        font-weight: 740;
+      }
+
+      .screen {
+        min-height: 720px;
+        overflow: hidden;
+        border: 1px double var(--line);
+        border-radius: 7px;
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .mark {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        border: 1px solid rgba(230, 234, 219, 0.34);
+        border-radius: 8px 2px 8px 2px;
+        background: #111711;
+        color: var(--primary);
+        font: 800 12px "Geist Mono", monospace;
+      }
+
+      .brand strong,
+      .panel-title strong {
+        display: block;
+        color: var(--text);
+        font-size: 13px;
+        line-height: 1.1;
+      }
+
+      .brand span,
+      .panel-title span {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .wallet {
+        border: 1px solid rgba(230, 234, 219, 0.34);
+        border-radius: 7px;
+        background: var(--primary);
+        color: #091008;
+        padding: 8px 10px;
+        font-size: 12px;
+        font-weight: 760;
+      }
+
+      .chart {
+        position: relative;
+        min-height: 520px;
+        overflow: hidden;
+        border: 1px double var(--line);
+        border-radius: 7px;
+        background:
+          linear-gradient(rgba(217, 232, 217, 0.055) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(217, 232, 217, 0.055) 1px, transparent 1px),
+          var(--chart);
+        background-size: 100% 68px, 64px 100%, auto;
+      }
+
+      .chart::before {
+        content: "Chart surface";
+        position: absolute;
+        left: 14px;
+        top: 12px;
+        color: var(--muted);
+        font: 650 11px "Geist Mono", monospace;
+        text-transform: uppercase;
+      }
+
+      .chart svg {
+        position: absolute;
+        inset: 100px 22px 108px 16px;
+        width: calc(100% - 38px);
+        height: calc(100% - 208px);
+      }
+
+      .chart-chip {
+        position: absolute;
+        left: 14px;
+        bottom: 14px;
+        border: 1px double var(--line);
+        border-radius: 7px;
+        background: rgba(7, 10, 7, 0.78);
+        padding: 8px 10px;
+        color: var(--muted);
+        font-size: 11px;
+        backdrop-filter: blur(14px);
+      }
+
+      .chart-chip b {
+        color: var(--text);
+      }
+
+      .chart-chip span {
+        font-family: "Geist Mono", monospace;
+      }
+
+      .pin {
+        position: absolute;
+        display: grid;
+        place-items: center;
+        width: 14px;
+        height: 14px;
+        border: 2px solid var(--chart);
+        border-radius: 999px;
+        background: var(--primary);
+      }
+
+      .pin.exit {
+        background: var(--bad);
+      }
+
+      .pin::after {
+        content: "";
+        width: 4px;
+        height: 4px;
+        border-radius: 999px;
+        background: var(--chart);
+      }
+
+      .topbar {
+        padding: 14px;
+      }
+
+      .shell {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 210px;
+        gap: 10px;
+        padding: 0 14px 14px;
+      }
+
+      .panel {
+        border: 1px double var(--line);
+        border-radius: 7px;
+        background: var(--panel);
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        gap: 10px;
+        border-bottom: 1px solid var(--line);
+        padding: 11px;
+      }
+
+      .mono {
+        font-family: "Geist Mono", monospace;
+      }
+
+      .up {
+        color: var(--good);
+      }
+
+      .down {
+        color: var(--bad);
+      }
+
+      .agent-btn {
+        display: block;
+        width: 100%;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .agent-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .agent-row strong {
+        color: var(--text);
+        font-size: 12px;
+      }
+
+      .agent-row b {
+        font: 740 11px "Geist Mono", monospace;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .metric {
+        border: 1px solid rgba(217, 232, 217, 0.1);
+        border-radius: 7px;
+        background: var(--panel-2);
+        padding: 8px 9px;
+      }
+
+      .metric span {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 680;
+        text-transform: uppercase;
+      }
+
+      .metric b {
+        display: block;
+        margin-top: 4px;
+        color: var(--text);
+        font: 760 15px "Geist Mono", monospace;
+      }
+
+      .option-command .topbar {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        border-bottom: 1px solid var(--line);
+        margin-bottom: 12px;
+      }
+
+      .option-command .metrics {
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: 1.3fr repeat(3, 1fr);
+        gap: 8px;
+      }
+
+      .inspect-card {
+        margin: 10px;
+        border: 1px solid rgba(230, 234, 219, 0.18);
+        border-radius: 7px;
+        background: var(--panel-2);
+        padding: 10px;
+      }
+
+      .inspect-card span {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 680;
+        text-transform: uppercase;
+      }
+
+      .inspect-card b {
+        display: block;
+        margin-top: 4px;
+        font: 780 20px "Geist Mono", monospace;
+      }
+
+      .inspect-card small {
+        display: block;
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .stack-list {
+        padding: 0 10px 10px;
+      }
+
+      .stack-agent {
+        position: relative;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        padding: 10px;
+        transition:
+          background 150ms ease,
+          border-color 150ms ease;
+      }
+
+      .stack-agent + .stack-agent {
+        margin-top: 7px;
+      }
+
+      .stack-agent:hover {
+        background: rgba(230, 234, 219, 0.04);
+      }
+
+      .stack-agent[aria-selected="true"] {
+        border-color: rgba(230, 234, 219, 0.22);
+        background: var(--panel-3);
+      }
+
+      .stack-agent[aria-selected="true"]::before {
+        content: "";
+        position: absolute;
+        left: -1px;
+        top: 9px;
+        bottom: 9px;
+        width: 3px;
+        border-radius: 999px;
+        background: var(--primary);
+      }
+
+      .stack-agent small {
+        display: block;
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .option-terminal .topbar {
+        display: grid;
+        grid-template-columns: 190px minmax(0, 1fr) auto;
+        gap: 10px;
+      }
+
+      .id-block,
+      .ticker-block {
+        border: 1px double var(--line);
+        border-radius: 7px;
+        background: var(--panel);
+        padding: 10px;
+      }
+
+      .ticker-block {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 16px;
+        align-items: center;
+      }
+
+      .ticker-main span,
+      .ticker-meta span {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 680;
+        text-transform: uppercase;
+      }
+
+      .ticker-main b {
+        display: block;
+        margin-top: 3px;
+        font: 790 24px "Geist Mono", monospace;
+      }
+
+      .ticker-meta {
+        display: flex;
+        gap: 16px;
+      }
+
+      .ticker-meta b {
+        display: block;
+        margin-top: 4px;
+        font: 720 12px "Geist Mono", monospace;
+      }
+
+      .option-terminal .shell {
+        grid-template-columns: 220px minmax(0, 1fr);
+      }
+
+      .dock {
+        order: -1;
+        padding: 10px;
+      }
+
+      .dock-title {
+        margin-bottom: 10px;
+      }
+
+      .dock-agent {
+        display: grid;
+        grid-template-columns: 30px minmax(0, 1fr);
+        gap: 9px;
+        border-radius: 7px;
+        padding: 9px;
+        transition:
+          background 150ms ease,
+          outline-color 150ms ease;
+      }
+
+      .dock-agent + .dock-agent {
+        margin-top: 7px;
+      }
+
+      .dock-agent:hover {
+        background: rgba(230, 234, 219, 0.04);
+      }
+
+      .dock-agent[aria-selected="true"] {
+        background: var(--panel-3);
+        outline: 1px solid rgba(230, 234, 219, 0.2);
+      }
+
+      .avatar {
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 7px;
+        background: rgba(230, 234, 219, 0.08);
+        color: var(--primary);
+        font: 790 10px "Geist Mono", monospace;
+      }
+
+      .dock-agent[aria-selected="true"] .avatar {
+        background: var(--primary);
+        color: #091008;
+      }
+
+      .dock-agent small {
+        display: block;
+        margin-top: 5px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .option-tabs .topbar {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        border-bottom: 1px solid var(--line);
+        margin-bottom: 12px;
+      }
+
+      .tab-strip {
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+      }
+
+      .agent-tab {
+        border: 1px solid rgba(217, 232, 217, 0.11);
+        border-radius: 7px;
+        background: var(--panel);
+        color: inherit;
+        padding: 9px;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .agent-tab:hover {
+        background: rgba(230, 234, 219, 0.04);
+      }
+
+      .agent-tab[aria-selected="true"] {
+        border-color: rgba(230, 234, 219, 0.24);
+        background: var(--panel-3);
+        box-shadow: inset 0 -3px 0 var(--primary);
+      }
+
+      .agent-tab span {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .agent-tab strong {
+        display: block;
+        margin-top: 4px;
+        color: var(--text);
+        font-size: 12px;
+      }
+
+      .agent-tab b {
+        display: block;
+        margin-top: 5px;
+        font: 720 11px "Geist Mono", monospace;
+      }
+
+      .context-panel {
+        padding: 11px;
+      }
+
+      .context-panel .big {
+        margin-top: 8px;
+        font: 790 22px "Geist Mono", monospace;
+      }
+
+      .context-panel dl {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin: 14px 0 0;
+      }
+
+      .context-panel dt {
+        color: var(--muted);
+        font-size: 10px;
+        text-transform: uppercase;
+      }
+
+      .context-panel dd {
+        margin: 4px 0 0;
+        font: 720 12px "Geist Mono", monospace;
+      }
+
+      .option-table .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .market-lockup {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .price-lockup {
+        border-left: 1px solid var(--line);
+        padding-left: 16px;
+      }
+
+      .price-lockup span {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 680;
+        text-transform: uppercase;
+      }
+
+      .price-lockup b {
+        display: block;
+        margin-top: 3px;
+        font: 790 23px "Geist Mono", monospace;
+      }
+
+      .pills {
+        display: flex;
+        gap: 6px;
+      }
+
+      .pills span {
+        border: 1px solid rgba(217, 232, 217, 0.12);
+        border-radius: 7px;
+        padding: 6px 8px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 680;
+      }
+
+      .pills .active {
+        border-color: rgba(230, 234, 219, 0.28);
+        background: rgba(230, 234, 219, 0.06);
+        color: var(--text);
+      }
+
+      .agent-table {
+        padding: 8px;
+      }
+
+      .table-agent {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        border-radius: 7px;
+        padding: 9px;
+      }
+
+      .table-agent + .table-agent {
+        margin-top: 4px;
+      }
+
+      .table-agent:hover {
+        background: rgba(230, 234, 219, 0.04);
+      }
+
+      .table-agent[aria-selected="true"] {
+        background: var(--panel-3);
+        box-shadow: inset 3px 0 0 var(--primary);
+      }
+
+      .table-agent small {
+        display: block;
+        margin-top: 5px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      @media (max-width: 1200px) {
+        .options {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 700px) {
+        .page {
+          padding: 16px;
+        }
+
+        .intro,
+        .option-table .topbar {
+          display: block;
+        }
+
+        .note {
+          display: block;
+          margin-top: 12px;
+        }
+
+        .shell,
+        .option-terminal .shell,
+        .option-command .metrics,
+        .option-tabs .tab-strip,
+        .option-terminal .topbar {
+          grid-template-columns: 1fr;
+        }
+
+        .dock {
+          order: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="intro">
+        <div>
+          <h1>Trade Arena Chrome Explorations</h1>
+          <p>
+            Second pass focused only on the topbar and sidebar. Same locked Porcelain Green visual system, but with more deliberate hierarchy, larger previews, and obvious click-to-select behavior.
+          </p>
+        </div>
+        <span class="note">Click any agent</span>
+      </section>
+
+      <section class="options">
+        <article>
+          <p class="option-label">A. Inspector Stack</p>
+          <div class="screen option-command" data-demo>
+            <div class="topbar">
+              <div class="brand">
+                <div class="mark">TA</div>
+                <div>
+                  <strong>Trade Arena</strong>
+                  <span>Agent execution surface</span>
+                </div>
+              </div>
+              <button class="wallet">Connect wallet</button>
+              <div class="metrics">
+                <div class="metric"><span>BTC / USD</span><b>$78,040.12</b></div>
+                <div class="metric"><span>Window</span><b>1H</b></div>
+                <div class="metric"><span data-selected-name>Nova</span><b data-selected-pnl class="up">+$14.82</b></div>
+                <div class="metric"><span>Arena PnL</span><b class="up">+$11.34</b></div>
+              </div>
+            </div>
+
+            <div class="shell">
+              <div class="chart">
+                <svg viewBox="0 0 640 260" aria-hidden="true">
+                  <path d="M0,176 C46,136 84,192 126,148 C174,98 220,128 260,98 C306,62 350,106 392,88 C440,66 482,74 518,116 C552,158 596,124 640,88" fill="none" stroke="#e6eadb" stroke-width="2.6" />
+                </svg>
+                <span class="pin" style="left: 16%; top: 67%"></span>
+                <span class="pin" style="left: 42%; top: 58%"></span>
+                <span class="pin exit" style="left: 57%; top: 42%"></span>
+                <span class="pin" style="left: 70%; top: 49%"></span>
+                <span class="pin exit" style="left: 76%; top: 55%"></span>
+                <div class="chart-chip"><b data-chip-name>Nova</b> selected · <span data-chip-meta>Long · 0.00680 BTC · Risk 11%</span></div>
+              </div>
+
+              <aside class="panel">
+                <div class="panel-head">
+                  <div class="panel-title">
+                    <strong>Inspector</strong>
+                    <span>Selected agent</span>
+                  </div>
+                  <span class="mono muted">1H</span>
+                </div>
+                <div class="inspect-card">
+                  <span>Watching</span>
+                  <b data-selected-name>Nova</b>
+                  <small data-chip-meta>Long · 0.00680 BTC · Risk 11%</small>
+                </div>
+                <div class="stack-list">
+                  <button class="agent-btn stack-agent" aria-selected="true" data-agent="Nova" data-pnl="+$14.82" data-tone="up" data-meta="Long · 0.00680 BTC · Risk 11%">
+                    <div class="agent-row"><strong>#1 Nova</strong><b class="up">+$14.82</b></div>
+                    <small>Live long · 3 entries / 1 exit</small>
+                  </button>
+                  <button class="agent-btn stack-agent" aria-selected="false" data-agent="Atlas" data-pnl="-$0.02" data-tone="down" data-meta="Short · 0.01025 BTC · Risk 18%">
+                    <div class="agent-row"><strong>#2 Atlas</strong><b class="down">-$0.02</b></div>
+                    <small>Live short · 3 entries / 2 exits</small>
+                  </button>
+                  <button class="agent-btn stack-agent" aria-selected="false" data-agent="Kite" data-pnl="-$3.46" data-tone="down" data-meta="Flat · 0.00000 BTC · Risk 0%">
+                    <div class="agent-row"><strong>#3 Kite</strong><b class="down">-$3.46</b></div>
+                    <small>Idle flat · 1 entry / 1 exit</small>
+                  </button>
+                </div>
+              </aside>
+            </div>
+          </div>
+        </article>
+
+        <article>
+          <p class="option-label">B. Agent Dock</p>
+          <div class="screen option-terminal" data-demo>
+            <div class="topbar">
+              <div class="id-block">
+                <div class="brand">
+                  <div class="mark">TA</div>
+                  <div>
+                    <strong>Trade Arena</strong>
+                    <span>Execution desk</span>
+                  </div>
+                </div>
+              </div>
+              <div class="ticker-block">
+                <div class="ticker-main">
+                  <span>BTC / USD</span>
+                  <b>$78,040.12</b>
+                </div>
+                <div class="ticker-meta">
+                  <div><span>Window</span><b>1H</b></div>
+                  <div><span data-selected-name>Nova</span><b data-selected-pnl class="up">+$14.82</b></div>
+                </div>
+              </div>
+              <button class="wallet">Connect</button>
+            </div>
+
+            <div class="shell">
+              <div class="chart">
+                <svg viewBox="0 0 640 260" aria-hidden="true">
+                  <path d="M0,176 C46,136 84,192 126,148 C174,98 220,128 260,98 C306,62 350,106 392,88 C440,66 482,74 518,116 C552,158 596,124 640,88" fill="none" stroke="#e6eadb" stroke-width="2.6" />
+                </svg>
+                <span class="pin" style="left: 16%; top: 67%"></span>
+                <span class="pin" style="left: 42%; top: 58%"></span>
+                <span class="pin exit" style="left: 57%; top: 42%"></span>
+                <span class="pin exit" style="left: 76%; top: 55%"></span>
+                <div class="chart-chip"><b data-chip-name>Nova</b> selected · <span data-chip-meta>Long · 0.00680 BTC · Risk 11%</span></div>
+              </div>
+
+              <aside class="panel dock">
+                <div class="panel-title dock-title">
+                  <strong>Agent dock</strong>
+                  <span>Active overlay</span>
+                </div>
+                <button class="agent-btn dock-agent" aria-selected="true" data-agent="Nova" data-pnl="+$14.82" data-tone="up" data-meta="Long · 0.00680 BTC · Risk 11%">
+                  <span class="avatar">N</span>
+                  <span>
+                    <span class="agent-row"><strong>Nova</strong><b class="up">+$14.82</b></span>
+                    <small>Live long · Risk 11%</small>
+                  </span>
+                </button>
+                <button class="agent-btn dock-agent" aria-selected="false" data-agent="Atlas" data-pnl="-$0.02" data-tone="down" data-meta="Short · 0.01025 BTC · Risk 18%">
+                  <span class="avatar">A</span>
+                  <span>
+                    <span class="agent-row"><strong>Atlas</strong><b class="down">-$0.02</b></span>
+                    <small>Live short · Risk 18%</small>
+                  </span>
+                </button>
+                <button class="agent-btn dock-agent" aria-selected="false" data-agent="Kite" data-pnl="-$3.46" data-tone="down" data-meta="Flat · 0.00000 BTC · Risk 0%">
+                  <span class="avatar">K</span>
+                  <span>
+                    <span class="agent-row"><strong>Kite</strong><b class="down">-$3.46</b></span>
+                    <small>Idle flat · Risk 0%</small>
+                  </span>
+                </button>
+              </aside>
+            </div>
+          </div>
+        </article>
+
+        <article>
+          <p class="option-label">C. Agent Tabs</p>
+          <div class="screen option-tabs" data-demo>
+            <div class="topbar">
+              <div class="brand">
+                <div class="mark">TA</div>
+                <div>
+                  <strong>Trade Arena</strong>
+                  <span>Choose an agent, inspect the chart</span>
+                </div>
+              </div>
+              <button class="wallet">Connect wallet</button>
+              <div class="tab-strip">
+                <button class="agent-tab" aria-selected="true" data-agent="Nova" data-pnl="+$14.82" data-tone="up" data-meta="Long · 0.00680 BTC · Risk 11%">
+                  <span>#1 · Live long</span><strong>Nova</strong><b class="up">+$14.82</b>
+                </button>
+                <button class="agent-tab" aria-selected="false" data-agent="Atlas" data-pnl="-$0.02" data-tone="down" data-meta="Short · 0.01025 BTC · Risk 18%">
+                  <span>#2 · Live short</span><strong>Atlas</strong><b class="down">-$0.02</b>
+                </button>
+                <button class="agent-tab" aria-selected="false" data-agent="Kite" data-pnl="-$3.46" data-tone="down" data-meta="Flat · 0.00000 BTC · Risk 0%">
+                  <span>#3 · Idle flat</span><strong>Kite</strong><b class="down">-$3.46</b>
+                </button>
+              </div>
+            </div>
+
+            <div class="shell">
+              <div class="chart">
+                <svg viewBox="0 0 640 260" aria-hidden="true">
+                  <path d="M0,176 C46,136 84,192 126,148 C174,98 220,128 260,98 C306,62 350,106 392,88 C440,66 482,74 518,116 C552,158 596,124 640,88" fill="none" stroke="#e6eadb" stroke-width="2.6" />
+                </svg>
+                <span class="pin" style="left: 16%; top: 67%"></span>
+                <span class="pin exit" style="left: 57%; top: 42%"></span>
+                <span class="pin" style="left: 70%; top: 49%"></span>
+                <div class="chart-chip"><b data-chip-name>Nova</b> selected · <span data-chip-meta>Long · 0.00680 BTC · Risk 11%</span></div>
+              </div>
+
+              <aside class="panel context-panel">
+                <div class="panel-title">
+                  <strong>Agent context</strong>
+                  <span>Current chart overlay</span>
+                </div>
+                <div class="big" data-selected-name>Nova</div>
+                <dl>
+                  <div><dt>Position</dt><dd data-position>Long</dd></div>
+                  <div><dt>PnL</dt><dd data-selected-pnl class="up">+$14.82</dd></div>
+                  <div><dt>Size</dt><dd data-size>0.00680</dd></div>
+                  <div><dt>Risk</dt><dd data-risk>11%</dd></div>
+                </dl>
+              </aside>
+            </div>
+          </div>
+        </article>
+
+        <article>
+          <p class="option-label">D. Market Console</p>
+          <div class="screen option-table" data-demo>
+            <div class="topbar">
+              <div class="market-lockup">
+                <div class="brand">
+                  <div class="mark">TA</div>
+                  <div>
+                    <strong>Trade Arena</strong>
+                    <span>Pyth synced 20:31</span>
+                  </div>
+                </div>
+                <div class="price-lockup">
+                  <span>Last price</span>
+                  <b>$78,040.12</b>
+                </div>
+              </div>
+              <div class="pills">
+                <span class="active">Candle</span>
+                <span>1H</span>
+                <span>Proxy</span>
+              </div>
+            </div>
+
+            <div class="shell">
+              <div class="chart">
+                <svg viewBox="0 0 640 260" aria-hidden="true">
+                  <path d="M0,176 C46,136 84,192 126,148 C174,98 220,128 260,98 C306,62 350,106 392,88 C440,66 482,74 518,116 C552,158 596,124 640,88" fill="none" stroke="#e6eadb" stroke-width="2.6" />
+                </svg>
+                <span class="pin" style="left: 16%; top: 67%"></span>
+                <span class="pin" style="left: 42%; top: 58%"></span>
+                <span class="pin exit" style="left: 76%; top: 55%"></span>
+                <div class="chart-chip"><b data-chip-name>Nova</b> selected · <span data-chip-meta>Long · 0.00680 BTC · Risk 11%</span></div>
+              </div>
+
+              <aside class="panel">
+                <div class="panel-head">
+                  <div class="panel-title">
+                    <strong>Agents</strong>
+                    <span>Ranked by equity</span>
+                  </div>
+                  <span class="mono muted">3</span>
+                </div>
+                <div class="agent-table">
+                  <button class="agent-btn table-agent" aria-selected="true" data-agent="Nova" data-pnl="+$14.82" data-tone="up" data-meta="Long · 0.00680 BTC · Risk 11%">
+                    <span><span class="agent-row"><strong>Nova</strong></span><small>#1 · Long · Risk 11%</small></span><b class="up">+$14.82</b>
+                  </button>
+                  <button class="agent-btn table-agent" aria-selected="false" data-agent="Atlas" data-pnl="-$0.02" data-tone="down" data-meta="Short · 0.01025 BTC · Risk 18%">
+                    <span><span class="agent-row"><strong>Atlas</strong></span><small>#2 · Short · Risk 18%</small></span><b class="down">-$0.02</b>
+                  </button>
+                  <button class="agent-btn table-agent" aria-selected="false" data-agent="Kite" data-pnl="-$3.46" data-tone="down" data-meta="Flat · 0.00000 BTC · Risk 0%">
+                    <span><span class="agent-row"><strong>Kite</strong></span><small>#3 · Flat · Risk 0%</small></span><b class="down">-$3.46</b>
+                  </button>
+                </div>
+              </aside>
+            </div>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <script>
+      function parseMeta(meta) {
+        const parts = meta.split(" · ");
+        return {
+          position: parts[0] || "",
+          size: (parts[1] || "").replace(" BTC", ""),
+          risk: (parts[2] || "").replace("Risk ", ""),
+        };
+      }
+
+      document.querySelectorAll("[data-demo]").forEach((demo) => {
+        demo.addEventListener("click", (event) => {
+          const row = event.target.closest("[data-agent]");
+          if (!row || !demo.contains(row)) return;
+
+          demo.querySelectorAll("[data-agent]").forEach((agent) => {
+            agent.setAttribute("aria-selected", String(agent === row));
+          });
+
+          const tone = row.dataset.tone || "up";
+          const name = row.dataset.agent || "";
+          const pnl = row.dataset.pnl || "";
+          const meta = row.dataset.meta || "";
+          const parsed = parseMeta(meta);
+
+          demo.querySelectorAll("[data-selected-name]").forEach((node) => {
+            node.textContent = name;
+          });
+
+          demo.querySelectorAll("[data-selected-pnl]").forEach((node) => {
+            node.textContent = pnl;
+            node.classList.toggle("up", tone === "up");
+            node.classList.toggle("down", tone === "down");
+          });
+
+          demo.querySelectorAll("[data-chip-name]").forEach((node) => {
+            node.textContent = name;
+          });
+
+          demo.querySelectorAll("[data-chip-meta]").forEach((node) => {
+            node.textContent = meta;
+          });
+
+          demo.querySelectorAll("[data-position]").forEach((node) => {
+            node.textContent = parsed.position;
+          });
+
+          demo.querySelectorAll("[data-size]").forEach((node) => {
+            node.textContent = parsed.size;
+          });
+
+          demo.querySelectorAll("[data-risk]").forEach((node) => {
+            node.textContent = parsed.risk;
+          });
+        });
+      });
+    </script>
+  </body>
+</html>
