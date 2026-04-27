@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Trade Arena">
+  <rect width="64" height="64" rx="10" fill="#020403"/>
+  <path d="M21.6 10.2 28.2 16.8 21.1 23.9 29.4 32.2 24.1 37.5 10.5 23.9Z" fill="#f1ead8"/>
+  <path d="M42.4 10.2 35.8 16.8 42.9 23.9 34.6 32.2 39.9 37.5 53.5 23.9Z" fill="#8fe7c1"/>
+  <path d="M21.6 53.8 28.2 47.2 21.1 40.1 29.4 31.8 24.1 26.5 10.5 40.1Z" fill="#bfe8df"/>
+  <path d="M42.4 53.8 35.8 47.2 42.9 40.1 34.6 31.8 39.9 26.5 53.5 40.1Z" fill="#5ac7df"/>
+  <circle cx="32" cy="32" r="3.1" fill="#020403"/>
+</svg>

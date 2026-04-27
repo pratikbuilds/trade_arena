@@ -1,19 +1,15 @@
 import {
   AlertCircle,
-  Bot,
-  Dot,
-  ExternalLink,
-  Radio,
+  CandlestickChart,
+  LineChart,
   RefreshCcw,
   Timer,
-  Trophy,
   Users,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Liveline } from "liveline";
 import type { CandlePoint, HoverPoint } from "liveline";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -24,20 +20,19 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePythChart } from "@/hooks/use-pyth-chart";
-import {
-  AGENTS,
-  DEVNET_GAME,
-  devnetTxUrl,
-  explorerTxUrl,
+import { AGENTS, DEVNET_GAME } from "@/lib/agent-game";
+import type {
+  AgentTrade,
+  ArenaAgent,
+  ArenaGameSummary,
+  LiveArenaSnapshot,
 } from "@/lib/agent-game";
-import type { AgentTrade, ArenaAgent } from "@/lib/agent-game";
 import {
   CHART_WINDOWS,
   candlesToLineData,
   formatAxisUsd,
   formatChartTimestamp,
   formatPriceDelta,
-  formatTimestamp,
   formatUsd,
   splitLiveCandle,
 } from "@/lib/market";
@@ -47,6 +42,12 @@ const MARKET_LABEL = "BTC / USD";
 const CHART_COLOR = "#e6eadb";
 const ALL_AGENTS = "all";
 const DEFAULT_TRADE_ID = "alpha-1";
+const CHART_PLOT_INSET = {
+  top: 57,
+  right: 82,
+  bottom: 72,
+  left: 22,
+};
 
 type ActiveAgentId = typeof ALL_AGENTS | ArenaAgent["id"];
 
@@ -69,12 +70,93 @@ function formatSignedUsd(value: number): string {
   return value >= 0 ? `+${absolute}` : `-${absolute}`;
 }
 
-function shortKey(value: string) {
-  return `${value.slice(0, 4)}...${value.slice(-4)}`;
+function formatRemainingDuration(seconds: number): string {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const remainingSeconds = safeSeconds % 60;
+  const paddedSeconds = remainingSeconds.toString().padStart(2, "0");
+
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, "0")}:${paddedSeconds}`;
+  }
+
+  return `${minutes}:${paddedSeconds}`;
+}
+
+function formatGameClock(
+  game: ArenaGameSummary,
+  snapshotUpdatedAt: number | undefined,
+  nowMs: number
+): string {
+  if (game.status === "ended") {
+    return "Ended";
+  }
+
+  if (typeof game.endsAtMs === "number") {
+    return formatRemainingDuration((game.endsAtMs - nowMs) / 1000);
+  }
+
+  if (
+    typeof game.elapsedSeconds !== "number" ||
+    typeof game.durationSeconds !== "number"
+  ) {
+    return "Pending";
+  }
+
+  const staleSeconds =
+    typeof snapshotUpdatedAt === "number"
+      ? Math.max(0, Math.floor((nowMs - snapshotUpdatedAt) / 1000))
+      : 0;
+  const elapsedSeconds =
+    game.status === "active"
+      ? game.elapsedSeconds + staleSeconds
+      : game.elapsedSeconds;
+
+  return formatRemainingDuration(game.durationSeconds - elapsedSeconds);
+}
+
+function isLiveArenaSnapshot(value: unknown): value is LiveArenaSnapshot {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const snapshot = value as Partial<LiveArenaSnapshot>;
+  return (
+    typeof snapshot.updatedAt === "number" &&
+    !!snapshot.game &&
+    Array.isArray(snapshot.agents)
+  );
 }
 
 function visibleCandles(candles: CandlePoint[], start: number, end: number) {
   return candles.filter((candle) => candle.time >= start && candle.time <= end);
+}
+
+function candleRangeForOverlay(candles: CandlePoint[], fallbackPrice: number) {
+  if (candles.length === 0) {
+    return {
+      min: fallbackPrice - 1,
+      max: fallbackPrice + 1,
+    };
+  }
+
+  const low = Math.min(...candles.map((candle) => candle.low));
+  const high = Math.max(...candles.map((candle) => candle.high));
+  const range = high - low;
+  const margin = range * 0.12;
+
+  if (range <= 0) {
+    return {
+      min: low - 0.2,
+      max: high + 0.2,
+    };
+  }
+
+  return {
+    min: low - margin,
+    max: high + margin,
+  };
 }
 
 function buildReplayMarkers(
@@ -118,39 +200,9 @@ function markerPosition(args: {
   const y = ((maxPrice - price) / Math.max(maxPrice - minPrice, 1)) * 100;
 
   return {
-    left: `${Math.min(96, Math.max(4, x))}%`,
-    top: `${Math.min(88, Math.max(8, y))}%`,
+    left: `${Math.min(97, Math.max(3, x))}%`,
+    top: `${Math.min(90, Math.max(10, y))}%`,
   };
-}
-
-function StatPill({
-  label,
-  value,
-  tone = "neutral",
-}: {
-  label: string;
-  value: string;
-  tone?: "neutral" | "positive" | "negative";
-}) {
-  const toneClass =
-    tone === "positive"
-      ? "text-[#9ad48c]"
-      : tone === "negative"
-      ? "text-[#d98585]"
-      : "text-foreground";
-
-  return (
-    <div className="min-w-0 rounded-[4px] border border-border/70 bg-background/45 px-2.5 py-2 shadow-[inset_0_1px_0_rgb(255_255_255/0.02)]">
-      <p className="text-[10px] font-semibold uppercase text-muted-foreground">
-        {label}
-      </p>
-      <p
-        className={`mt-0.5 truncate font-mono text-sm font-semibold ${toneClass}`}
-      >
-        {value}
-      </p>
-    </div>
-  );
 }
 
 function TradeExecutionOverlay({
@@ -215,130 +267,77 @@ function TradeExecutionOverlay({
       aria-label="Agent trade replay markers"
       className="pointer-events-none absolute inset-0 z-10"
     >
-      <div className="absolute left-3 top-12 flex max-w-[calc(100%-1.5rem)] items-center gap-3 rounded-[4px] border border-border/75 bg-background/82 px-3 py-2 text-[11px] font-medium text-muted-foreground shadow-[0_12px_40px_rgb(0_0_0/0.24)] backdrop-blur sm:left-4">
-        <span className="font-semibold text-foreground">
-          {focusedTrade ? focusedTrade.agent.name : "All agents"}
-        </span>
-        <span className="h-3 w-px bg-border" />
-        <span className="inline-flex items-center gap-1.5">
-          <span className="size-2 rounded-full bg-primary" />
-          Entry {markers.filter((marker) => marker.phase === "entry").length}
-        </span>
-        <span className="h-3 w-px bg-border" />
-        <span className="inline-flex items-center gap-1.5">
-          <span className="size-2 rounded-full bg-[#d98585]" />
-          Exit {markers.filter((marker) => marker.phase === "exit").length}
-        </span>
-        {focusedTrade ? (
-          <span
-            className={`hidden font-mono sm:inline ${
-              focusedTrade.trade.pnlUsd >= 0
-                ? "text-[#9ad48c]"
-                : "text-[#d98585]"
-            }`}
-          >
-            {formatSignedUsd(focusedTrade.trade.pnlUsd)}
-          </span>
-        ) : null}
-      </div>
+      <div className="absolute" style={CHART_PLOT_INSET}>
+        {markers
+          .filter((marker) => !focusedMarkerIds.has(marker.id))
+          .map((marker) => {
+            const isEntry = marker.phase === "entry";
+            const position = markerPosition({
+              time: marker.time,
+              price: marker.price,
+              startTime,
+              endTime,
+              minPrice,
+              maxPrice,
+            });
 
-      {markers
-        .filter((marker) => !focusedMarkerIds.has(marker.id))
-        .map((marker) => {
-          const isEntry = marker.phase === "entry";
-          const position = markerPosition({
-            time: marker.time,
-            price: marker.price,
-            startTime,
-            endTime,
-            minPrice,
-            maxPrice,
-          });
-
-          return (
-            <div
-              key={marker.id}
-              className="group pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2"
-              style={position}
-            >
-              <div className="flex flex-col items-center">
+            return (
+              <div
+                key={marker.id}
+                className="marker-group pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2"
+                style={position}
+              >
                 <span
-                  className={`h-4 w-px ${
-                    isEntry ? "bg-primary/75" : "bg-[#d98585]/75"
-                  } ${isEntry ? "order-2" : "order-1"}`}
-                />
-                <span
-                  className={`order-2 flex size-4 items-center justify-center rounded-full border-2 border-background shadow-[0_0_18px_rgb(230_234_219/0.10)] ${
+                  className={`block size-2.5 rounded-full border border-background ${
                     isEntry ? "bg-primary" : "bg-[#d98585]"
                   }`}
                   style={{
                     backgroundColor: isEntry ? marker.agent.color : undefined,
                   }}
-                >
-                  <span className="size-1.5 rounded-full bg-background" />
-                </span>
-                <span
-                  className={`hidden rounded-[4px] border bg-background/94 px-1.5 py-0.5 font-mono text-[10px] font-semibold shadow-sm backdrop-blur group-hover:block ${
-                    isEntry
-                      ? "order-3 mt-1 border-primary/25 text-primary"
-                      : "order-0 mb-1 border-[#d98585]/25 text-[#d98585]"
-                  }`}
-                >
-                  {isEntry ? "ENTRY" : "EXIT"}
-                </span>
-                <span className="absolute left-1/2 top-full mt-5 hidden -translate-x-1/2 whitespace-nowrap rounded-[4px] border border-border bg-background/96 px-2 py-1 font-mono text-[11px] font-semibold text-foreground shadow-md group-hover:block">
-                  {marker.agent.name} {isEntry ? "entry" : "exit"}{" "}
-                  {formatUsd(marker.price)}
+                />
+                <span className="marker-callout absolute left-1/2 top-full mt-1 whitespace-nowrap rounded border border-border/70 bg-background/95 px-1.5 py-0.5 font-mono text-[10px] text-foreground">
+                  {marker.agent.name} {formatUsd(marker.price)}
                 </span>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
 
-      {focusedTrade && entryPosition && exitPosition ? (
-        <>
-          <svg className="absolute inset-0 z-[-1] h-full w-full overflow-visible">
-            <line
-              stroke={focusedTrade.agent.color}
-              strokeDasharray="7 6"
-              strokeLinecap="round"
-              strokeWidth="2"
-              x1={entryPosition.left}
-              x2={exitPosition.left}
-              y1={entryPosition.top}
-              y2={exitPosition.top}
-            />
-          </svg>
+        {focusedTrade && entryPosition && exitPosition ? (
+          <>
+            <svg className="absolute inset-0 h-full w-full overflow-visible">
+              <line
+                stroke={focusedTrade.agent.color}
+                strokeDasharray="4 3"
+                strokeLinecap="round"
+                strokeWidth="1.5"
+                x1={entryPosition.left}
+                x2={exitPosition.left}
+                y1={entryPosition.top}
+                y2={exitPosition.top}
+              />
+            </svg>
 
-          {[
-            {
-              label: "ENTRY",
-              price: focusedTrade.trade.entryPrice,
-              position: entryPosition,
-              entry: true,
-            },
-            {
-              label: "EXIT",
-              price: focusedTrade.trade.exitPrice,
-              position: exitPosition,
-              entry: false,
-            },
-          ].map((marker) => (
-            <div
-              key={marker.label}
-              className="group pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2"
-              style={{ left: marker.position.left, top: marker.position.top }}
-            >
-              <div className="flex flex-col items-center">
+            {[
+              {
+                label: "Entry",
+                price: focusedTrade.trade.entryPrice,
+                position: entryPosition,
+                entry: true,
+              },
+              {
+                label: "Exit",
+                price: focusedTrade.trade.exitPrice,
+                position: exitPosition,
+                entry: false,
+              },
+            ].map((marker) => (
+              <div
+                key={marker.label}
+                className="pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2"
+                style={{ left: marker.position.left, top: marker.position.top }}
+              >
                 <span
-                  className={`h-4 w-px ${
-                    marker.entry
-                      ? "order-2 bg-primary/75"
-                      : "order-1 bg-[#d98585]/75"
-                  }`}
-                />
-                <span
-                  className={`order-2 flex size-5 items-center justify-center rounded-full border-2 border-background shadow-[0_0_18px_rgb(230_234_219/0.18)] ${
+                  className={`block size-3 rounded-full border-2 border-background ${
                     marker.entry ? "bg-primary" : "bg-[#d98585]"
                   }`}
                   style={{
@@ -346,26 +345,12 @@ function TradeExecutionOverlay({
                       ? focusedTrade.agent.color
                       : undefined,
                   }}
-                >
-                  <span className="size-2 rounded-full bg-background" />
-                </span>
-                <span
-                  className={`rounded-[4px] border bg-background/94 px-1.5 py-0.5 font-mono text-[10px] font-semibold shadow-sm backdrop-blur ${
-                    marker.entry
-                      ? "order-3 mt-1 border-primary/25 text-primary"
-                      : "order-0 mb-1 border-[#d98585]/25 text-[#d98585]"
-                  }`}
-                >
-                  {marker.label}
-                </span>
-                <span className="absolute left-1/2 top-full mt-5 hidden -translate-x-1/2 whitespace-nowrap rounded-[4px] border border-border bg-background/96 px-2 py-1 font-mono text-[11px] font-semibold text-foreground shadow-md group-hover:block">
-                  {formatUsd(marker.price)}
-                </span>
+                />
               </div>
-            </div>
-          ))}
-        </>
-      ) : null}
+            ))}
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -373,8 +358,6 @@ function TradeExecutionOverlay({
 function AgentSidebar({
   activeAgentId,
   agents,
-  latestPrice,
-  selectedWindowLabel,
   focusedTrade,
   tradeRows,
   onSelectAgent,
@@ -382,176 +365,83 @@ function AgentSidebar({
 }: {
   activeAgentId: ActiveAgentId;
   agents: ArenaAgent[];
-  latestPrice: number;
-  selectedWindowLabel: string;
   focusedTrade: TradeWithAgent | null;
   tradeRows: TradeWithAgent[];
   onSelectAgent: (id: ActiveAgentId) => void;
   onSelectTrade: (agent: ArenaAgent, trade: AgentTrade) => void;
 }) {
   const liveCount = agents.filter((agent) => agent.trades.length > 0).length;
-  const selectedAgent =
-    focusedTrade?.agent ??
-    (activeAgentId === ALL_AGENTS
-      ? agents[0]
-      : agents.find((agent) => agent.id === activeAgentId)) ??
-    agents[0];
+  const compactTradeRows = focusedTrade
+    ? [
+        focusedTrade,
+        ...tradeRows.filter(({ trade }) => trade.id !== focusedTrade.trade.id),
+      ].slice(0, 6)
+    : tradeRows.slice(0, 6);
 
   return (
-    <aside className="flex h-full min-h-[430px] flex-col border-t border-border/65 bg-card/88 lg:min-h-[500px] lg:border-l lg:border-t-0">
-      <div className="border-b border-border/65 px-3 py-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-[4px] border border-border/70 bg-background/55">
-              <Bot aria-hidden="true" className="size-4 text-primary" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold">Agents</p>
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                Watching{" "}
-                {activeAgentId === ALL_AGENTS
-                  ? "all session trades"
-                  : selectedAgent.name}
-              </p>
-            </div>
-          </div>
-          <Badge
-            variant="outline"
-            className="border-border/70 bg-background/45 font-mono text-muted-foreground"
-          >
-            <Radio
-              aria-hidden="true"
-              data-icon="inline-start"
-              className="text-[#9ad48c]"
-            />
-            {liveCount}/{agents.length}
-          </Badge>
-        </div>
+    <aside className="flex min-h-0 flex-col border-t border-border/70 bg-card lg:h-full lg:min-h-[420px] lg:border-l lg:border-t-0">
+      <div className="flex items-center justify-between gap-3 border-b border-border/70 px-3 py-2.5">
+        <span className="text-sm font-semibold">Agents</span>
+        <span className="font-mono text-xs text-muted-foreground">
+          {liveCount}/{agents.length} live
+        </span>
       </div>
 
-      <div className="grid content-start gap-1 px-2 py-2">
+      <div className="grid content-start gap-px px-1.5 py-1.5">
         <button
           aria-pressed={activeAgentId === ALL_AGENTS}
-          className={`relative grid w-full grid-cols-[minmax(0,1fr)_auto] gap-2 overflow-hidden rounded-[4px] px-2.5 py-2.5 text-left transition-colors hover:bg-muted/35 ${
-            activeAgentId === ALL_AGENTS
-              ? "bg-muted/50 before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-primary"
-              : "bg-transparent"
+          className={`selectable-row flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none ${
+            activeAgentId === ALL_AGENTS ? "bg-muted/60" : ""
           }`}
           onClick={() => onSelectAgent(ALL_AGENTS)}
           type="button"
         >
-          <span className="min-w-0">
-            <span className="flex items-center gap-2">
-              <span className="relative flex size-7 shrink-0 items-center justify-center rounded-[4px] border border-border/60 bg-background/45">
-                <Users
-                  aria-hidden="true"
-                  className="size-3.5 text-muted-foreground"
-                />
-              </span>
-              <span className="truncate text-sm font-semibold">All agents</span>
-            </span>
-            <span className="mt-1 block text-xs text-muted-foreground">
-              Full MCP trade tape
-            </span>
+          <span className="flex items-center gap-2">
+            <Users aria-hidden="true" className="size-3 text-muted-foreground" />
+            <span className="text-sm">All</span>
           </span>
-          <span className="text-right">
-            <span className="block font-mono text-sm font-semibold text-foreground">
-              {tradeRows.length}
-            </span>
-            <span className="mt-1 block font-mono text-xs text-muted-foreground">
-              trades
-            </span>
+          <span className="font-mono text-xs text-muted-foreground">
+            {tradeRows.length} trades
           </span>
         </button>
 
         {agents.map((agent) => {
           const isPositive = agent.realizedPnlUsd >= 0;
           const isSelected = agent.id === activeAgentId;
-          const rank =
-            [...agents]
-              .sort((a, b) => b.realizedPnlUsd - a.realizedPnlUsd)
-              .findIndex((rankedAgent) => rankedAgent.id === agent.id) + 1;
-          const latestTrade = agent.trades.at(-1);
 
           return (
             <button
               key={agent.id}
               aria-pressed={isSelected}
-              className={`relative grid w-full grid-cols-[minmax(0,1fr)_auto] gap-2 overflow-hidden rounded-[4px] px-2.5 py-2.5 text-left transition-colors hover:bg-muted/35 ${
-                isSelected
-                  ? "bg-muted/50 before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-primary"
-                  : "bg-transparent"
+              className={`selectable-row flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none ${
+                isSelected ? "bg-muted/60" : ""
               }`}
               onClick={() => onSelectAgent(agent.id)}
               type="button"
             >
-              <span className="min-w-0">
-                <span className="flex items-center gap-2">
-                  <span className="relative flex size-7 shrink-0 items-center justify-center rounded-[4px] border border-border/60 bg-background/45">
-                    <Bot
-                      aria-hidden="true"
-                      className="size-3.5 text-muted-foreground"
-                    />
-                    <span className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-[#9ad48c] shadow-[0_0_10px_rgb(154_212_140/0.75)]" />
-                  </span>
-                  <span className="truncate text-sm font-semibold">
-                    {agent.name}
-                  </span>
-                  <span className="font-mono text-[10px] text-muted-foreground">
-                    #{rank}
-                  </span>
-                  {rank === 1 ? (
-                    <Trophy
-                      aria-hidden="true"
-                      className="size-3 text-[#9ad48c]"
-                    />
-                  ) : null}
-                </span>
-                <span className="mt-1 block text-xs text-muted-foreground">
-                  {latestTrade?.side ?? "flat"} - {agent.trades.length} round
-                  trips - {shortKey(agent.player)}
-                </span>
-              </span>
-
-              <span className="text-right">
+              <span className="flex min-w-0 items-center gap-2">
                 <span
-                  className={`block font-mono text-sm font-semibold ${
-                    isPositive ? "text-[#9ad48c]" : "text-[#d98585]"
-                  }`}
-                >
-                  {formatSignedUsd(agent.realizedPnlUsd)}
-                </span>
-                <span className="mt-1 block font-mono text-xs text-muted-foreground">
-                  {formatUsd(agent.virtualCashUsd)}
-                </span>
+                  className="size-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: agent.color }}
+                />
+                <span className="truncate text-sm">{agent.name}</span>
               </span>
-
-              <span className="col-span-2 grid grid-cols-[1fr_auto] gap-2 text-[10px] text-muted-foreground">
-                <span className="truncate">{agent.thesis}</span>
-                <span className="font-mono">{selectedWindowLabel}</span>
+              <span
+                className={`font-mono text-xs ${
+                  isPositive ? "text-[#9ad48c]" : "text-[#d98585]"
+                }`}
+              >
+                {formatSignedUsd(agent.realizedPnlUsd)}
               </span>
             </button>
           );
         })}
       </div>
 
-      <div className="min-h-0 flex-1 border-t border-border/65 px-2 py-2">
-        <div className="mb-2 flex items-center justify-between gap-3 px-1">
-          <p className="text-[10px] font-semibold uppercase text-muted-foreground">
-            Trade tape
-          </p>
-          <a
-            className="inline-flex items-center gap-1 text-[10px] font-medium text-primary underline-offset-4 hover:underline"
-            href={devnetTxUrl(DEVNET_GAME.createGameTx)}
-            rel="noreferrer"
-            target="_blank"
-          >
-            Game {DEVNET_GAME.id}
-            <ExternalLink aria-hidden="true" className="size-3" />
-          </a>
-        </div>
-        <div className="grid max-h-[210px] gap-1 overflow-auto pr-1">
-          {tradeRows.map(({ agent, trade }) => {
+      <div className="min-h-0 flex-1 border-t border-border/70 px-1.5 py-1.5">
+        <p className="mb-1 px-2 text-xs text-muted-foreground">Trades</p>
+        <div className="grid gap-px overflow-auto">
+          {compactTradeRows.map(({ agent, trade }) => {
             const isActive = focusedTrade?.trade.id === trade.id;
             const isPositive = trade.pnlUsd >= 0;
 
@@ -559,90 +449,31 @@ function AgentSidebar({
               <button
                 key={trade.id}
                 aria-pressed={isActive}
-                className={`grid gap-1 rounded-[4px] border px-2.5 py-2 text-left transition-colors hover:bg-muted/35 ${
-                  isActive
-                    ? "border-primary/40 bg-muted/45"
-                    : "border-border/55 bg-background/30"
+                className={`selectable-row flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none ${
+                  isActive ? "bg-muted/60" : ""
                 }`}
                 onClick={() => onSelectTrade(agent, trade)}
                 type="button"
               >
-                <span className="flex items-center justify-between gap-3">
-                  <span className="min-w-0 truncate text-xs font-semibold">
-                    {agent.name} - Cycle {trade.cycle} {trade.side}
-                  </span>
+                <span className="flex min-w-0 items-center gap-2">
                   <span
-                    className={`font-mono text-xs font-semibold ${
-                      isPositive ? "text-[#9ad48c]" : "text-[#d98585]"
-                    }`}
-                  >
-                    {formatSignedUsd(trade.pnlUsd)}
+                    className="size-1.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: agent.color }}
+                  />
+                  <span className="truncate text-xs">
+                    {agent.name} · {trade.side}
                   </span>
                 </span>
-                <span className="grid grid-cols-2 gap-2 text-[10px] text-muted-foreground">
-                  <span>Entry {formatUsd(trade.entryPrice)}</span>
-                  <span>Exit {formatUsd(trade.exitPrice)}</span>
-                </span>
-                <span className="flex items-center gap-3 text-[10px]">
-                  <a
-                    className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
-                    href={explorerTxUrl(trade.openTx)}
-                    onClick={(event) => event.stopPropagation()}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    Entry tx
-                    <ExternalLink aria-hidden="true" className="size-3" />
-                  </a>
-                  <a
-                    className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
-                    href={explorerTxUrl(trade.closeTx)}
-                    onClick={(event) => event.stopPropagation()}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    Exit tx
-                    <ExternalLink aria-hidden="true" className="size-3" />
-                  </a>
+                <span
+                  className={`font-mono text-xs ${
+                    isPositive ? "text-[#9ad48c]" : "text-[#d98585]"
+                  }`}
+                >
+                  {formatSignedUsd(trade.pnlUsd)}
                 </span>
               </button>
             );
           })}
-        </div>
-      </div>
-
-      <div className="mt-auto border-t border-border/65 p-2">
-        <div className="rounded-[4px] bg-background/35 px-3 py-2.5">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase text-muted-foreground">
-                Viewing
-              </p>
-              <p className="mt-1 flex items-center gap-2 truncate text-sm font-semibold">
-                <Bot aria-hidden="true" className="size-3.5 text-primary" />
-                {focusedTrade
-                  ? `${focusedTrade.agent.name} cycle ${focusedTrade.trade.cycle}`
-                  : selectedAgent.name}
-              </p>
-            </div>
-            <div className="text-right">
-              <p
-                className={`font-mono text-sm font-semibold ${
-                  (focusedTrade?.trade.pnlUsd ??
-                    selectedAgent.realizedPnlUsd) >= 0
-                    ? "text-[#9ad48c]"
-                    : "text-[#d98585]"
-                }`}
-              >
-                {formatSignedUsd(
-                  focusedTrade?.trade.pnlUsd ?? selectedAgent.realizedPnlUsd
-                )}
-              </p>
-              <p className="mt-1 font-mono text-xs text-muted-foreground">
-                {formatUsd(latestPrice)}
-              </p>
-            </div>
-          </div>
         </div>
       </div>
     </aside>
@@ -655,73 +486,33 @@ function ChartLoadingState() {
       <Card
         aria-busy="true"
         aria-label="Loading market chart"
-        className="relative h-full min-h-0 w-full rounded-[4px] border border-border/75 bg-card/95 py-0 shadow-[0_18px_70px_rgb(0_0_0/0.30)] before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-primary/20"
+        className="min-h-0 w-full rounded-md border border-border/70 bg-card py-0 shadow-lg lg:h-full"
       >
-        <CardHeader className="gap-2.5 border-b border-border/70 bg-background/20 py-2.5">
-          <div className="grid gap-3 xl:grid-cols-[minmax(260px,0.8fr)_minmax(410px,1.15fr)_minmax(270px,0.62fr)_auto] xl:items-center">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <Skeleton className="h-6 w-24 border border-primary/10 bg-primary/10" />
-                <Skeleton className="h-3 w-9 bg-muted/35" />
-                <Skeleton className="h-3 w-24 bg-muted/35" />
-              </div>
-              <div className="mt-2 space-y-1">
-                <Skeleton className="h-3 w-20 bg-muted/35" />
-                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                  <Skeleton className="h-10 w-52 bg-muted/55" />
-                  <Skeleton className="h-4 w-16 bg-[#9ad48c]/15" />
-                </div>
-              </div>
+        <CardHeader className="border-b border-border/70 px-3 py-2">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-baseline gap-3">
+              <Skeleton className="h-7 w-32 bg-muted/55" />
+              <Skeleton className="h-4 w-12 bg-muted/35" />
+              <Skeleton className="h-3 w-16 bg-muted/25" />
             </div>
-
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {["w-14", "w-16", "w-20", "w-14"].map((width, index) => (
-                <div
-                  key={index}
-                  className="min-w-0 rounded-[4px] border border-border/70 bg-background/45 px-2.5 py-2 shadow-[inset_0_1px_0_rgb(255_255_255/0.02)]"
-                >
-                  <Skeleton className="h-2.5 w-12 bg-muted/35" />
-                  <Skeleton className={`mt-2 h-4 ${width} bg-muted/55`} />
-                </div>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-3 overflow-hidden rounded-[4px] border border-border/65 bg-background/45 text-xs sm:max-xl:max-w-xl">
-              {[0, 1, 2].map((item) => (
-                <div
-                  key={item}
-                  className={
-                    item === 0
-                      ? "px-3 py-2"
-                      : "border-l border-border/60 px-3 py-2"
-                  }
-                >
-                  <Skeleton className="h-2.5 w-12 bg-muted/35" />
-                  <Skeleton className="mt-2 h-4 w-14 bg-muted/55" />
-                </div>
-              ))}
-            </div>
-
-            <div className="flex items-center justify-end">
-              <Skeleton className="size-8 border border-border/65 bg-background/45" />
+            <div className="flex items-center gap-3">
+              <Skeleton className="h-6 w-16 rounded-md bg-muted/35" />
+              <Skeleton className="size-7 rounded bg-muted/25" />
             </div>
           </div>
         </CardHeader>
 
         <CardContent className="min-h-0 flex-1 p-0">
-          <div className="grid h-full min-h-0 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="p-2">
-              <div className="relative h-full min-h-[360px] w-full overflow-hidden rounded-[4px] border border-border/65 bg-background shadow-[inset_0_0_0_1px_rgb(255_255_255/0.012)]">
-                <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-4 px-3 py-3">
-                  <Skeleton className="h-3 w-24 bg-muted/35" />
-                  <Skeleton className="h-6 w-28 border border-border/40 bg-card/70" />
+          <div className="grid h-full min-h-0 lg:grid-cols-[minmax(0,1fr)_280px]">
+            <div className="min-h-0 p-2">
+              <div className="relative h-[400px] w-full overflow-hidden rounded-md border border-border/70 bg-background lg:h-full">
+                <div className="absolute right-3 top-3 z-10">
+                  <Skeleton className="h-7 w-24 rounded bg-muted/35" />
                 </div>
-
-                <div className="absolute inset-x-4 bottom-[72px] top-[74px]">
-                  <div className="absolute inset-0 bg-[linear-gradient(rgba(217,232,217,0.045)_1px,transparent_1px),linear-gradient(90deg,rgba(217,232,217,0.045)_1px,transparent_1px)] bg-[size:100%_20%,12.5%_100%]" />
+                <div className="absolute inset-4 top-14">
                   <svg
                     aria-hidden="true"
-                    className="absolute inset-0 h-full w-full text-primary/30"
+                    className="h-full w-full text-primary/20"
                     preserveAspectRatio="none"
                     viewBox="0 0 100 100"
                   >
@@ -730,48 +521,22 @@ function ChartLoadingState() {
                       fill="none"
                       stroke="currentColor"
                       strokeLinecap="round"
-                      strokeWidth="1.25"
+                      strokeWidth="1"
                     />
                   </svg>
-                  <div className="absolute left-[16%] top-[67%] size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-primary shadow-[0_0_18px_rgb(230_234_219/0.10)]" />
-                  <div className="absolute left-[42%] top-[58%] size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-primary shadow-[0_0_18px_rgb(230_234_219/0.10)]" />
-                  <div className="absolute left-[57%] top-[42%] size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-[#d98585] shadow-[0_0_18px_rgb(217_133_133/0.12)]" />
-                  <div className="absolute left-[76%] top-[55%] size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-[#d98585] shadow-[0_0_18px_rgb(217_133_133/0.12)]" />
-                </div>
-
-                <div className="absolute left-3 top-12 z-10 flex max-w-[calc(100%-1.5rem)] items-center gap-3 rounded-[4px] border border-border/75 bg-background/82 px-3 py-2 shadow-[0_12px_40px_rgb(0_0_0/0.24)] backdrop-blur sm:left-4">
-                  <Skeleton className="h-3 w-12 bg-muted/55" />
-                  <span className="h-3 w-px bg-border" />
-                  <Skeleton className="h-3 w-16 bg-primary/15" />
-                  <span className="h-3 w-px bg-border" />
-                  <Skeleton className="h-3 w-14 bg-[#d98585]/15" />
                 </div>
               </div>
             </div>
 
-            <aside className="flex h-full min-h-[430px] flex-col border-t border-border/65 bg-card/88 lg:min-h-[500px] lg:border-l lg:border-t-0">
-              <div className="border-b border-border/65 px-3 py-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <div className="flex size-8 shrink-0 items-center justify-center rounded-[4px] border border-border/70 bg-background/55">
-                      <Bot
-                        aria-hidden="true"
-                        className="size-4 text-primary/60"
-                      />
-                    </div>
-                    <div className="min-w-0">
-                      <Skeleton className="h-4 w-16 bg-muted/55" />
-                      <Skeleton className="mt-2 h-3 w-28 bg-muted/35" />
-                    </div>
-                  </div>
-                  <div className="flex h-6 items-center gap-1.5 rounded-[4px] border border-border/70 bg-background/45 px-2">
-                    <Radio
-                      aria-hidden="true"
-                      className="size-3 text-[#9ad48c]/60"
-                    />
-                    <Skeleton className="h-3 w-8 bg-muted/45" />
-                  </div>
-                </div>
+            <aside className="flex min-h-[420px] flex-col border-t border-border/70 bg-card lg:border-l lg:border-t-0">
+              <div className="flex items-center justify-between gap-3 border-b border-border/70 px-3 py-2.5">
+                <Skeleton className="h-4 w-14 bg-muted/55" />
+                <Skeleton className="h-3 w-10 bg-muted/35" />
+              </div>
+              <div className="grid gap-1 p-1.5">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <Skeleton key={i} className="h-7 w-full bg-muted/25" />
+                ))}
               </div>
             </aside>
           </div>
@@ -787,10 +552,11 @@ export function MarketChart() {
   const [activeAgentId, setActiveAgentId] = useState<ActiveAgentId>("alpha");
   const [activeTradeId, setActiveTradeId] = useState(DEFAULT_TRADE_ID);
   const [fallbackNow] = useState(() => Math.floor(Date.now() / 1000));
+  const [liveArena, setLiveArena] = useState<LiveArenaSnapshot | null>(null);
+  const [clockNowMs, setClockNowMs] = useState(() => Date.now());
   const {
     candles,
     error,
-    lastUpdatedAt,
     retry,
     selectedWindow,
     setSelectedWindow,
@@ -798,6 +564,57 @@ export function MarketChart() {
   } = usePythChart({
     symbol: MARKET_SYMBOL,
   });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadLiveArena() {
+      try {
+        const response = await fetch(`/live-arena.json?ts=${Date.now()}`, {
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
+          if (!cancelled) {
+            setLiveArena(null);
+          }
+          return;
+        }
+
+        const payload = (await response.json()) as unknown;
+        if (!cancelled) {
+          setLiveArena((current) => {
+            if (!isLiveArenaSnapshot(payload)) {
+              return null;
+            }
+
+            return current?.updatedAt === payload.updatedAt ? current : payload;
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setLiveArena(null);
+        }
+      }
+    }
+
+    void loadLiveArena();
+    const intervalId = window.setInterval(loadLiveArena, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(
+      () => setClockNowMs(Date.now()),
+      1000
+    );
+
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   const { committed, liveCandle } = splitLiveCandle(
     candles,
@@ -809,21 +626,18 @@ export function MarketChart() {
   const priceDelta = formatPriceDelta(latestPrice, openingPrice);
   const priceDeltaPositive = latestPrice >= openingPrice;
   const hoverValue = hoverPoint?.value ?? latestPrice;
-  const hoverTime =
-    hoverPoint?.time ?? liveCandle?.time ?? committed.at(-1)?.time ?? null;
-  const syncLabel = lastUpdatedAt
-    ? formatTimestamp(Math.floor(lastUpdatedAt / 1000))
-    : "Pending";
   const chartAnchorTime =
     liveCandle?.time ?? committed.at(-1)?.time ?? fallbackNow;
+  const agents = liveArena?.agents.length ? liveArena.agents : AGENTS;
+  const game = liveArena?.game ?? DEVNET_GAME;
   const selectedAgents =
     activeAgentId === ALL_AGENTS
-      ? AGENTS
-      : AGENTS.filter((agent) => agent.id === activeAgentId);
+      ? agents
+      : agents.filter((agent) => agent.id === activeAgentId);
   const selectedTradeRows = selectedAgents.flatMap((agent) =>
     agent.trades.map((trade) => ({ agent, trade }))
   );
-  const allTradeRows = AGENTS.flatMap((agent) =>
+  const allTradeRows = agents.flatMap((agent) =>
     agent.trades.map((trade) => ({ agent, trade }))
   );
   const focusedTrade =
@@ -835,24 +649,14 @@ export function MarketChart() {
   const replayStart = chartAnchorTime - selectedWindow.secs;
   const replayEnd = chartAnchorTime;
   const candlesInView = visibleCandles(candles, replayStart, replayEnd);
-  const chartPrices = [
-    ...candlesInView.flatMap((candle) => [candle.high, candle.low]),
-    ...replayMarkers.map((marker) => marker.price),
-    ...(focusedTrade
-      ? [focusedTrade.trade.entryPrice, focusedTrade.trade.exitPrice]
-      : []),
-  ];
-  const minReplayPrice = Math.min(...chartPrices, latestPrice) - 4;
-  const maxReplayPrice = Math.max(...chartPrices, latestPrice) + 4;
-  const totalPnl = AGENTS.reduce((sum, agent) => sum + agent.realizedPnlUsd, 0);
-  const totalCash = AGENTS.reduce(
-    (sum, agent) => sum + agent.virtualCashUsd,
-    0
+  const replayPriceRange = candleRangeForOverlay(candlesInView, latestPrice);
+  const minReplayPrice = replayPriceRange.min;
+  const maxReplayPrice = replayPriceRange.max;
+  const gameClockLabel = formatGameClock(
+    game,
+    liveArena?.updatedAt,
+    clockNowMs
   );
-  const leader = [...AGENTS].sort(
-    (a, b) => b.realizedPnlUsd - a.realizedPnlUsd
-  )[0];
-  const liveCount = AGENTS.filter((agent) => agent.trades.length > 0).length;
   const livelineReference =
     focusedTrade && activeAgentId !== ALL_AGENTS
       ? {
@@ -913,119 +717,34 @@ export function MarketChart() {
   }
 
   return (
-    <section className="mx-auto flex min-h-0 w-full flex-1">
-      <Card className="relative h-full min-h-0 w-full rounded-[4px] border border-border/75 bg-card/95 py-0 shadow-[0_18px_70px_rgb(0_0_0/0.30)] before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-primary/20">
-        <CardHeader className="gap-2.5 border-b border-border/70 bg-background/20 py-2.5">
-          <div className="grid gap-3 xl:grid-cols-[minmax(260px,0.8fr)_minmax(410px,1.15fr)_minmax(270px,0.62fr)_auto] xl:items-center">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge
-                  variant="outline"
-                  className="border-primary/25 bg-primary/10 text-primary"
-                >
-                  {MARKET_LABEL}
-                </Badge>
-                <span className="text-xs uppercase text-muted-foreground">
-                  Pyth
-                </span>
-                <Badge
-                  variant="secondary"
-                  className="bg-secondary/80 text-secondary-foreground"
-                >
-                  {activeAgentId === ALL_AGENTS
-                    ? "All agents"
-                    : focusedTrade?.agent.name}
-                </Badge>
-                <span className="flex items-center text-xs text-muted-foreground">
-                  <Dot
-                    aria-hidden="true"
-                    className="-mx-1 size-5 text-primary"
-                  />
-                  Sync {syncLabel}
-                </span>
-              </div>
-              <div className="mt-2 space-y-1">
-                <p className="text-[11px] font-semibold uppercase text-muted-foreground">
-                  Last price
-                </p>
-                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                  <CardTitle className="font-mono text-4xl font-semibold leading-none sm:text-[40px]">
-                    {formatUsd(hoverValue)}
-                  </CardTitle>
-                  <span
-                    className={
-                      priceDeltaPositive
-                        ? "text-sm font-medium text-[#9ad48c]"
-                        : "text-sm font-medium text-[#d98585]"
-                    }
-                  >
-                    {priceDelta}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <StatPill label="Window" value={selectedWindow.label} />
-              <StatPill label="Trades" value={`${selectedTradeRows.length}`} />
-              <StatPill
-                label="Hover"
-                value={hoverTime ? formatTimestamp(hoverTime) : "Pending"}
-              />
-              <StatPill
-                label="Net PnL"
-                tone={totalPnl >= 0 ? "positive" : "negative"}
-                value={formatSignedUsd(totalPnl)}
-              />
-            </div>
-
-            <div className="grid grid-cols-3 overflow-hidden rounded-[4px] border border-border/65 bg-background/45 text-xs sm:max-xl:max-w-xl">
-              <div className="px-3 py-2">
-                <p className="text-[10px] font-semibold uppercase text-muted-foreground">
-                  Clock
-                </p>
-                <p className="mt-1 flex items-center gap-1.5 font-mono text-sm font-semibold text-foreground">
-                  <Timer aria-hidden="true" className="size-3.5 text-primary" />
-                  Live
-                </p>
-              </div>
-              <div className="border-l border-border/60 px-3 py-2">
-                <p className="text-[10px] font-semibold uppercase text-muted-foreground">
-                  Agents
-                </p>
-                <p className="mt-1 flex items-center gap-1.5 font-mono text-sm font-semibold text-foreground">
-                  <Radio
-                    aria-hidden="true"
-                    className="size-3.5 text-[#9ad48c]"
-                  />
-                  {liveCount}/{AGENTS.length}
-                </p>
-              </div>
-              <div className="border-l border-border/60 px-3 py-2">
-                <p className="text-[10px] font-semibold uppercase text-muted-foreground">
-                  Leader
-                </p>
-                <p className="mt-1 truncate font-mono text-sm font-semibold text-[#9ad48c]">
-                  {leader?.name ?? "Pending"}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2">
-              <Button
-                aria-label="Show all agent trades"
-                onClick={() => setActiveAgentId(ALL_AGENTS)}
-                size="sm"
-                variant={activeAgentId === ALL_AGENTS ? "secondary" : "outline"}
+    <section className="mx-auto flex w-full lg:min-h-0 lg:flex-1">
+      <Card className="min-h-0 w-full rounded-md border border-border/70 bg-card py-0 shadow-lg lg:h-full">
+        <CardHeader className="border-b border-border/70 px-3 py-2">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-baseline gap-3">
+              <CardTitle className="font-mono text-2xl font-semibold leading-none">
+                {formatUsd(hoverValue)}
+              </CardTitle>
+              <span
+                className={`text-sm font-medium ${
+                  priceDeltaPositive ? "text-[#9ad48c]" : "text-[#d98585]"
+                }`}
               >
-                <Users aria-hidden="true" data-icon="inline-start" />
-                All
-              </Button>
+                {priceDelta}
+              </span>
+              <span className="text-xs text-muted-foreground">{MARKET_LABEL}</span>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <span className="flex items-center gap-1.5 rounded-md border border-border/70 bg-background/50 px-2 py-1 font-mono text-xs text-muted-foreground">
+                <Timer aria-hidden="true" className="size-3 text-primary" />
+                {gameClockLabel}
+              </span>
               <Button
                 aria-label="Refresh chart data"
                 onClick={retry}
                 size="icon-sm"
-                variant="outline"
+                variant="ghost"
               >
                 <RefreshCcw aria-hidden="true" />
               </Button>
@@ -1033,55 +752,90 @@ export function MarketChart() {
           </div>
         </CardHeader>
 
-        <CardContent className="min-h-0 flex-1 p-0">
-          <div className="grid h-full min-h-0 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="p-2">
-              <div className="relative h-full min-h-[360px] w-full overflow-hidden rounded-[4px] border border-border/65 bg-background shadow-[inset_0_0_0_1px_rgb(255_255_255/0.012)]">
-                <div className="h-full pt-3">
-                  <Liveline
-                    badge={false}
-                    badgeVariant="minimal"
-                    candleWidth={selectedWindow.candleWidth}
-                    candles={committed}
-                    color={CHART_COLOR}
-                    data={lineData}
-                    emptyText="Waiting for Pyth candles"
-                    fill={false}
-                    formatTime={formatChartTimestamp}
-                    formatValue={formatAxisUsd}
-                    grid
-                    lineData={lineData}
-                    lineMode={displayMode === "line"}
-                    lineValue={latestPrice}
-                    liveCandle={liveCandle ?? undefined}
-                    mode="candle"
-                    momentum
-                    onHover={setHoverPoint}
-                    onModeChange={setDisplayMode}
-                    onWindowChange={(secs) => {
-                      const nextWindow = CHART_WINDOWS.find(
-                        (entry) => entry.secs === secs
-                      );
-                      if (nextWindow) {
-                        setSelectedWindow(nextWindow);
-                      }
-                    }}
-                    padding={{ top: 44, right: 82, bottom: 72, left: 22 }}
-                    pulse
-                    referenceLine={livelineReference}
-                    scrub
-                    showValue={false}
-                    style={{ height: "calc(100% - 42px)" }}
-                    theme="dark"
-                    tooltipY={18}
-                    value={latestPrice}
-                    window={selectedWindow.secs}
-                    windows={CHART_WINDOWS.map(({ label, secs }) => ({
-                      label,
-                      secs,
-                    }))}
-                    windowStyle="rounded"
-                  />
+        <CardContent className="min-h-0 p-0 lg:flex-1">
+          <div className="grid min-h-0 lg:h-full lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="min-h-0 p-2">
+              <div className="relative h-[430px] min-h-[360px] w-full overflow-hidden rounded-[4px] border border-border/65 bg-background shadow-[inset_0_0_0_1px_rgb(255_255_255/0.012)] sm:h-[500px] lg:h-full">
+                <div className="flex h-full flex-col lg:block lg:pt-3">
+                  <div className="relative z-20 flex flex-wrap items-center justify-end gap-2 px-3 pt-3 lg:absolute lg:right-3 lg:top-3 lg:px-0 lg:pt-0">
+                    <div className="inline-flex rounded-[4px] border border-border/65 bg-background/80 p-0.5 shadow-[0_10px_30px_rgb(0_0_0/0.22)] backdrop-blur">
+                      {CHART_WINDOWS.map((chartWindow) => (
+                        <button
+                          key={chartWindow.secs}
+                          className={`chart-control rounded-[3px] px-2.5 py-1 text-[11px] font-medium focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none ${
+                            selectedWindow.secs === chartWindow.secs
+                              ? "bg-muted text-foreground"
+                              : "text-muted-foreground"
+                          }`}
+                          onClick={() => setSelectedWindow(chartWindow)}
+                          type="button"
+                        >
+                          {chartWindow.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="inline-flex rounded-[4px] border border-border/65 bg-background/80 p-0.5 shadow-[0_10px_30px_rgb(0_0_0/0.22)] backdrop-blur">
+                      <button
+                        aria-label="Show line chart"
+                        className={`chart-control flex size-7 items-center justify-center rounded-[3px] focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none ${
+                          displayMode === "line"
+                            ? "bg-muted text-foreground"
+                            : "text-muted-foreground"
+                        }`}
+                        onClick={() => setDisplayMode("line")}
+                        type="button"
+                      >
+                        <LineChart aria-hidden="true" className="size-3.5" />
+                      </button>
+                      <button
+                        aria-label="Show candlestick chart"
+                        className={`chart-control flex size-7 items-center justify-center rounded-[3px] focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none ${
+                          displayMode === "candle"
+                            ? "bg-muted text-foreground"
+                            : "text-muted-foreground"
+                        }`}
+                        onClick={() => setDisplayMode("candle")}
+                        type="button"
+                      >
+                        <CandlestickChart
+                          aria-hidden="true"
+                          className="size-3.5"
+                        />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="min-h-0 flex-1 lg:h-full">
+                    <Liveline
+                      badge={false}
+                      badgeVariant="minimal"
+                      candleWidth={selectedWindow.candleWidth}
+                      candles={committed}
+                      color={CHART_COLOR}
+                      data={lineData}
+                      emptyText="Waiting for Pyth candles"
+                      fill={false}
+                      formatTime={formatChartTimestamp}
+                      formatValue={formatAxisUsd}
+                      grid
+                      lineData={lineData}
+                      lineMode={displayMode === "line"}
+                      lineValue={latestPrice}
+                      liveCandle={liveCandle ?? undefined}
+                      mode="candle"
+                      momentum
+                      onHover={setHoverPoint}
+                      padding={{ top: 44, right: 82, bottom: 72, left: 22 }}
+                      pulse
+                      referenceLine={livelineReference}
+                      scrub
+                      showValue={false}
+                      style={{ height: "100%" }}
+                      theme="dark"
+                      tooltipY={18}
+                      value={latestPrice}
+                      window={selectedWindow.secs}
+                    />
+                  </div>
                 </div>
                 <TradeExecutionOverlay
                   chartAnchorTime={chartAnchorTime}
@@ -1092,26 +846,6 @@ export function MarketChart() {
                   minPrice={minReplayPrice}
                   startTime={replayStart}
                 />
-              </div>
-
-              <div className="mt-2 grid gap-3 rounded-[4px] border border-border/60 bg-muted/[0.20] px-3 py-2.5 sm:grid-cols-[1fr_auto] sm:items-center">
-                <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] uppercase text-muted-foreground/90">
-                  <span className="text-foreground/80">
-                    Feed {MARKET_SYMBOL}
-                  </span>
-                  <span>Mode {displayMode}</span>
-                  <span>Cash {formatUsd(totalCash)}</span>
-                  <span>Markers {replayMarkers.length}</span>
-                </div>
-                <a
-                  className="inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-4 hover:underline"
-                  href={devnetTxUrl(DEVNET_GAME.createGameTx)}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  Game tx
-                  <ExternalLink aria-hidden="true" className="size-3" />
-                </a>
               </div>
 
               {status === "error" && candles.length > 0 ? (
@@ -1135,17 +869,15 @@ export function MarketChart() {
 
             <AgentSidebar
               activeAgentId={activeAgentId}
-              agents={AGENTS}
+              agents={agents}
               focusedTrade={focusedTrade}
-              latestPrice={latestPrice}
-              selectedWindowLabel={selectedWindow.label}
               tradeRows={selectedTradeRows}
               onSelectAgent={(id) => {
                 setActiveAgentId(id);
                 const nextAgent =
                   id === ALL_AGENTS
-                    ? AGENTS[0]
-                    : AGENTS.find((agent) => agent.id === id);
+                    ? agents[0]
+                    : agents.find((agent) => agent.id === id);
                 setActiveTradeId(nextAgent?.trades[0]?.id ?? DEFAULT_TRADE_ID);
               }}
               onSelectTrade={(agent, trade) => {

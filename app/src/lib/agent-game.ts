@@ -28,7 +28,25 @@ export type ArenaAgent = {
   trades: AgentTrade[];
 };
 
-export const DEVNET_GAME = {
+export type ArenaGameSummary = {
+  id: string;
+  gamePda: string;
+  createGameTx: string;
+  startedAtLabel: string;
+  status?: "idle" | "creating" | "joinable" | "active" | "ending" | "ended";
+  elapsedSeconds?: number;
+  durationSeconds?: number;
+  startedAtMs?: number | null;
+  endsAtMs?: number | null;
+};
+
+export type LiveArenaSnapshot = {
+  updatedAt: number;
+  game: ArenaGameSummary;
+  agents: ArenaAgent[];
+};
+
+export const DEVNET_GAME: ArenaGameSummary = {
   id: "198873298",
   gamePda: "D5h2BRa3Lacaxe3Zh7bHcTmDkBUgUrt8aQtj3NJPwXAu",
   createGameTx:
@@ -175,11 +193,19 @@ export const AGENTS: ArenaAgent[] = [
 ];
 
 export function explorerTxUrl(tx: string) {
-  return `https://explorer.solana.com/tx/${tx}?customUrl=${encodeURIComponent(
+  if (!tx) {
+    return "#";
+  }
+
+  return `https://explorer.solana.com/tx/${tx}?cluster=custom&customUrl=${encodeURIComponent(
     "https://devnet.magicblock.app"
   )}`;
 }
 
 export function devnetTxUrl(tx: string) {
+  if (!tx) {
+    return "#";
+  }
+
   return `https://explorer.solana.com/tx/${tx}?cluster=devnet`;
 }

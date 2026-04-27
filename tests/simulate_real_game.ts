@@ -50,7 +50,7 @@ const GAME_SEED = Buffer.from("game");
 const PLAYER_SEED = Buffer.from("player");
 const VAULT_SEED = Buffer.from("vault");
 
-const DURATION = Number(process.env.SIM_DURATION_SECONDS ?? "300");
+const DURATION = Number(process.env.SIM_DURATION_SECONDS ?? "900");
 const ENTRY_FEE = 1_000_000;
 const TARGET_TRADES_PER_PLAYER = Number(
   process.env.SIM_TARGET_TRADES_PER_PLAYER ?? "12"
@@ -67,6 +67,9 @@ const REPORT_PATH =
     "artifacts",
     `simulation-instruction-log-${Date.now()}.md`
   );
+const LIVE_SNAPSHOT_PATH =
+  process.env.SIM_LIVE_SNAPSHOT_PATH ??
+  path.join(process.cwd(), "app", "public", "live-arena.json");
 
 type SideArg = { long: {} } | { short: {} };
 type ClusterKind = "devnet" | "magicblock-er";
@@ -92,6 +95,25 @@ type TradeRecord = {
   closedAtMs?: number;
   openSig: string;
   closeSig?: string;
+};
+
+type StrategyDecision = {
+  side: SideArg;
+  notionalMicros: number;
+  reason: string;
+};
+
+type TradingAgentConfig = {
+  id: "alpha" | "beta" | "gamma";
+  displayName: string;
+  handle: string;
+  thesis: string;
+  color: string;
+  decide: (
+    priceHistory: number[],
+    cycle: number,
+    virtualUsdc: bigint
+  ) => StrategyDecision;
 };
 
 type InstructionRecord = {
@@ -172,7 +194,7 @@ function txUrl(cluster: ClusterKind, sig: string): string {
     return `https://explorer.solana.com/tx/${sig}?cluster=devnet`;
   }
 
-  return `https://explorer.solana.com/tx/${sig}?customUrl=${encodeURIComponent(
+  return `https://explorer.solana.com/tx/${sig}?cluster=custom&customUrl=${encodeURIComponent(
     ER_ENDPOINT
   )}`;
 }
@@ -374,56 +396,101 @@ function sideToString(side: SideArg): "LONG" | "SHORT" {
   return "long" in side ? "LONG" : "SHORT";
 }
 
-function decideSide(
-  player: string,
-  priceHistory: number[],
-  cycle: number
-): SideArg {
-  if (priceHistory.length < 3) {
-    if (player === "beta") return { short: {} };
-    return { long: {} };
-  }
-
-  const p0 = priceHistory[priceHistory.length - 3];
-  const p1 = priceHistory[priceHistory.length - 2];
-  const p2 = priceHistory[priceHistory.length - 1];
-  const momentum = p2 - p1;
-  const acceleration = p2 - p1 - (p1 - p0);
-  const mean = (p0 + p1 + p2) / 3;
-
-  if (player === "alpha") {
-    return momentum >= 0 ? { long: {} } : { short: {} };
-  }
-
-  if (player === "beta") {
-    return momentum >= 0 ? { short: {} } : { long: {} };
-  }
-
-  if (Math.abs(acceleration) > 2) {
-    return acceleration >= 0 ? { long: {} } : { short: {} };
-  }
-
-  if (Math.abs(p2 - mean) > 4) {
-    return p2 >= mean ? { short: {} } : { long: {} };
-  }
-
-  return cycle % 2 === 0 ? { long: {} } : { short: {} };
-}
-
 function computeTradeNotionalMicros(
   virtualUsdc: bigint,
-  cycle: number
+  cycle: number,
+  riskPct: number
 ): number {
   const virtualUsd = Number(virtualUsdc) / 1e6;
   const notionalUsd = Math.max(
     MIN_TRADE_NOTIONAL_USD,
-    Math.min(MAX_TRADE_NOTIONAL_USD, virtualUsd * (0.055 + (cycle % 3) * 0.015))
+    Math.min(
+      MAX_TRADE_NOTIONAL_USD,
+      virtualUsd * (riskPct + (cycle % 3) * 0.01)
+    )
   );
   return Math.max(Math.floor(notionalUsd * 1e6), 10_000_000);
 }
 
+function latestPrices(priceHistory: number[]) {
+  const p2 = priceHistory.at(-1) ?? 0;
+  const p1 = priceHistory.at(-2) ?? p2;
+  const p0 = priceHistory.at(-3) ?? p1;
+  const recent = priceHistory.slice(-6);
+  const mean =
+    recent.length > 0
+      ? recent.reduce((sum, price) => sum + price, 0) / recent.length
+      : p2;
+
+  return {
+    p0,
+    p1,
+    p2,
+    mean,
+    momentum: p2 - p1,
+    acceleration: p2 - p1 - (p1 - p0),
+    spreadFromMean: p2 - mean,
+  };
+}
+
+const AGENT_CONFIGS: Record<TradingAgentConfig["id"], TradingAgentConfig> = {
+  alpha: {
+    id: "alpha",
+    displayName: "Agent Alpha",
+    handle: "Trend follower",
+    thesis:
+      "Trades with short-term BTC momentum and scales up when the tape keeps confirming.",
+    color: "#f43f5e",
+    decide: (priceHistory, cycle, virtualUsdc) => {
+      const { momentum } = latestPrices(priceHistory);
+      const side = momentum >= 0 ? { long: {} } : { short: {} };
+      return {
+        side,
+        notionalMicros: computeTradeNotionalMicros(virtualUsdc, cycle, 0.075),
+        reason: `momentum=${momentum.toFixed(2)}`,
+      };
+    },
+  },
+  beta: {
+    id: "beta",
+    displayName: "Agent Beta",
+    handle: "Momentum fader",
+    thesis:
+      "Takes the other side of the latest BTC push and uses steadier medium risk.",
+    color: "#22d3ee",
+    decide: (priceHistory, cycle, virtualUsdc) => {
+      const { momentum } = latestPrices(priceHistory);
+      const side = momentum >= 0 ? { short: {} } : { long: {} };
+      return {
+        side,
+        notionalMicros: computeTradeNotionalMicros(virtualUsdc, cycle, 0.055),
+        reason: `fading-momentum=${momentum.toFixed(2)}`,
+      };
+    },
+  },
+  gamma: {
+    id: "gamma",
+    displayName: "Agent Gamma",
+    handle: "Breakout scalper",
+    thesis:
+      "Runs a smaller independent scalp book that alternates direction every cycle.",
+    color: "#a3e635",
+    decide: (priceHistory, cycle, virtualUsdc) => {
+      const { acceleration } = latestPrices(priceHistory);
+      const side = cycle % 2 === 0 ? { short: {} } : { long: {} };
+      return {
+        side,
+        notionalMicros: computeTradeNotionalMicros(virtualUsdc, cycle, 0.03),
+        reason: `alternating-scalp cycle=${cycle} accel=${acceleration.toFixed(
+          2
+        )}`,
+      };
+    },
+  },
+};
+
 describe("Trade Arena — Real Multi-Trade Simulation", function () {
-  this.timeout(1_200_000);
+  this.timeout(Math.max(1_200_000, (DURATION + 600) * 1000));
 
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
@@ -462,6 +529,89 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
   let gammaATA: anchor.web3.PublicKey;
   let gameStartMs = Date.now();
   let gameStartUnixTs: number | null = null;
+  let createGameTx = "";
+
+  function writeLiveSnapshot(status: string): void {
+    const nowMs = Date.now();
+    const elapsedSeconds =
+      status === "creating"
+        ? 0
+        : Math.max(0, Math.floor((nowMs - gameStartMs) / 1000));
+    const playerByName: Record<string, anchor.web3.Keypair> = {
+      alpha,
+      beta,
+      gamma,
+    };
+    const startedAtMs =
+      status === "creating" || status === "joinable" ? null : gameStartMs;
+    const endsAtMs = startedAtMs ? startedAtMs + DURATION * 1000 : null;
+
+    const agents = ["alpha", "beta", "gamma"].map((name) => {
+      const player = playerByName[name];
+      const config = AGENT_CONFIGS[name as TradingAgentConfig["id"]];
+      const playerTrades = tradeLedger.filter((trade) => trade.player === name);
+      const realizedPnlUsd = playerTrades.reduce(
+        (sum, trade) => sum + (trade.pnlUsd ?? 0),
+        0
+      );
+
+      return {
+        id: name,
+        name: config.displayName,
+        handle: config.handle,
+        thesis: config.thesis,
+        color: config.color,
+        player: player.publicKey.toBase58(),
+        session: player.publicKey.toBase58(),
+        virtualCashUsd: 10_000 + realizedPnlUsd,
+        realizedPnlUsd,
+        trades: playerTrades
+          .filter((trade) => trade.closeSig)
+          .map((trade) => ({
+            id: `${name}-${trade.cycle}`,
+            cycle: trade.cycle,
+            side: trade.side === "LONG" ? "long" : "short",
+            notionalUsd: trade.collateralUsd,
+            sizeBtc: trade.sizeBtc,
+            entryPrice: trade.entryUsd,
+            exitPrice: trade.exitUsd ?? trade.entryUsd,
+            pnlUsd: trade.pnlUsd ?? 0,
+            openTx: trade.openSig,
+            closeTx: trade.closeSig ?? trade.openSig,
+            openOffsetSeconds:
+              Math.floor(trade.openedAtMs / 1000) -
+              Math.floor(nowMs / 1000) +
+              90,
+            closeOffsetSeconds:
+              Math.floor((trade.closedAtMs ?? trade.openedAtMs) / 1000) -
+              Math.floor(nowMs / 1000) +
+              90,
+          })),
+      };
+    });
+
+    const snapshot = {
+      updatedAt: nowMs,
+      game: {
+        id: String(GAME_ID),
+        gamePda: gamePDA?.toBase58?.() ?? "",
+        createGameTx,
+        startedAtLabel:
+          status === "creating"
+            ? "Creating live MCP arena"
+            : `Live MCP run T+${elapsedSeconds}s / ${DURATION}s`,
+        status,
+        elapsedSeconds,
+        durationSeconds: DURATION,
+        startedAtMs,
+        endsAtMs,
+      },
+      agents,
+    };
+
+    fs.mkdirSync(path.dirname(LIVE_SNAPSHOT_PATH), { recursive: true });
+    fs.writeFileSync(LIVE_SNAPSHOT_PATH, JSON.stringify(snapshot, null, 2));
+  }
 
   function recordInstruction(
     step: string,
@@ -479,6 +629,7 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
       url: txUrl(cluster, sig),
       note,
     });
+    writeLiveSnapshot(step === "create_game" ? "joinable" : "active");
   }
 
   after("write simulation instruction report", function () {
@@ -491,6 +642,9 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
       `- Game PDA: ${gamePDA?.toBase58() ?? "n/a"}`,
       `- ER endpoint: ${ER_ENDPOINT}`,
       `- Devnet endpoint: https://api.devnet.solana.com`,
+      `- alpha strategy: ${AGENT_CONFIGS.alpha.handle} — ${AGENT_CONFIGS.alpha.thesis}`,
+      `- beta strategy: ${AGENT_CONFIGS.beta.handle} — ${AGENT_CONFIGS.beta.thesis}`,
+      `- gamma strategy: ${AGENT_CONFIGS.gamma.handle} — ${AGENT_CONFIGS.gamma.thesis}`,
       "",
       "## Instructions",
       "",
@@ -498,10 +652,12 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
       "| --- | ---: | --- | --- | --- | --- | --- |",
       ...instructionLog.map((item, index) => {
         const tSec =
-          gameStartMs > 0 ? Math.max(0, Math.round((item.atMs - gameStartMs) / 1000)) : 0;
-        return `| ${index + 1} | ${tSec} | ${item.step} | ${
-          item.cluster
-        } | \`${item.sig}\` | [open](${item.url}) | ${item.note ?? ""} |`;
+          gameStartMs > 0
+            ? Math.max(0, Math.round((item.atMs - gameStartMs) / 1000))
+            : 0;
+        return `| ${index + 1} | ${tSec} | ${item.step} | ${item.cluster} | \`${
+          item.sig
+        }\` | [open](${item.url}) | ${item.note ?? ""} |`;
       }),
       "",
       "## Trade Summary",
@@ -514,10 +670,12 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
 
     fs.mkdirSync(path.dirname(REPORT_PATH), { recursive: true });
     fs.writeFileSync(REPORT_PATH, `${lines.join("\n")}\n`, "utf8");
+    writeLiveSnapshot("ended");
     console.log(`\n  instruction report: ${REPORT_PATH}`);
   });
 
   before("fund players and create USDC", async function () {
+    writeLiveSnapshot("creating");
     playerNames[alpha.publicKey.toBase58()] = "alpha";
     playerNames[beta.publicKey.toBase58()] = "beta";
     playerNames[gamma.publicKey.toBase58()] = "gamma";
@@ -619,6 +777,7 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
       })
       .rpc();
+    createGameTx = createGameSig;
     recordInstruction("create_game", "devnet", createGameSig);
     log("✓ game created");
 
@@ -743,11 +902,14 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
         PYTH_LAZER_BTC_USD
       );
       priceHistory.push(livePriceUsd);
-      const side = decideSide(name, priceHistory, cycle);
-      const notionalMicros = computeTradeNotionalMicros(
-        before!.virtualUsdc,
-        cycle
+      const strategy = AGENT_CONFIGS[name as TradingAgentConfig["id"]];
+      const decision = strategy.decide(
+        priceHistory,
+        cycle,
+        before!.virtualUsdc
       );
+      const side = decision.side;
+      const notionalMicros = decision.notionalMicros;
 
       const tx = await program.methods
         .tradePosition({
@@ -768,7 +930,9 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
         `trade_increase_${name}`,
         "magicblock-er",
         sig,
-        `${sideToString(side)} notional=$${fmtUsd(notionalMicros / 1e6)}`
+        `${strategy.handle}: ${sideToString(side)} notional=$${fmtUsd(
+          notionalMicros / 1e6
+        )} ${decision.reason}`
       );
       await sleep(600);
 
@@ -798,6 +962,7 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
 
       openTradeByPlayer.set(player.publicKey.toBase58(), record);
       tradeLedger.push(record);
+      writeLiveSnapshot("active");
 
       log(
         `✓ ${name} opened ${record.side.padEnd(5)} ${fmtBtc(
@@ -866,6 +1031,7 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
 
       completedTrades[name] += 1;
       openTradeByPlayer.delete(player.publicKey.toBase58());
+      writeLiveSnapshot("active");
 
       log(
         `✓ ${name} closed ${record!.side.padEnd(5)} exit≈$${fmtUsd(
@@ -886,15 +1052,16 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
       .transaction();
     const startSig = await sendToER(erConnection, creatorKeypair, startTx);
     await confirmER(erConnection, startSig);
-    recordInstruction("start_game", "magicblock-er", startSig);
     gameStartMs = Date.now();
+    recordInstruction("start_game", "magicblock-er", startSig);
+    writeLiveSnapshot("active");
     const gameInfo = await erConnection.getAccountInfo(gamePDA, "confirmed");
     expect(gameInfo).to.not.equal(null);
     gameStartUnixTs = parseGameStartTime(Buffer.from(gameInfo!.data));
 
     console.log(`\n  [${elapsed(gameStartMs)}] ✓ game started on ER`);
     console.log(
-      `  Strategy set: alpha=momentum | beta=mean-reversion | gamma=hybrid`
+      `  Strategy set: alpha=trend-following | beta=mean-reversion | gamma=breakout-scalping`
     );
     console.log(
       `  Target: ${TARGET_TRADES_PER_PLAYER} closed trades per player`
@@ -980,6 +1147,7 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
     const endSig = await sendToER(erConnection, creatorKeypair, endTx);
     await confirmER(erConnection, endSig);
     recordInstruction("end_game", "magicblock-er", endSig);
+    writeLiveSnapshot("ending");
     log(`✓ end_game confirmed on ER sig:${endSig.slice(0, 8)}…`);
 
     log("sending direct game commit/undelegate to ER…");
@@ -1089,7 +1257,10 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
     ] as [anchor.web3.Keypair, anchor.web3.PublicKey, string][]) {
       const account = await provider.connection.getAccountInfo(ps, "confirmed");
       expect(account, `${name} state missing on base layer`).to.not.equal(null);
-      expect(account!.owner.equals(program.programId), `${name} still delegated`).to.equal(true);
+      expect(
+        account!.owner.equals(program.programId),
+        `${name} still delegated`
+      ).to.equal(true);
       const state = parsePlayerStateBuffer(Buffer.from(account!.data));
       expect(state, `${name} state missing at final leaderboard`).to.not.equal(
         null
@@ -1187,6 +1358,7 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
     expect(Number(vaultBal)).to.equal(0);
 
     log(`\n  🏆 ${winnerName} wins ${prize} USDC — vault drained to 0`);
+    writeLiveSnapshot("ended");
     log(
       `      Completed trades: alpha=${completedTrades.alpha} beta=${completedTrades.beta} gamma=${completedTrades.gamma}`
     );

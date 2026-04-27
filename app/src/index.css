@@ -90,6 +90,7 @@
 }
 
 :root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --background: oklch(0.145 0.009 142);
   --foreground: oklch(0.955 0.012 138);
   --card: oklch(0.190 0.012 142);
@@ -244,4 +245,77 @@
     radial-gradient(ellipse at 50% -18%, rgba(230, 234, 219, 0.055), transparent 34rem),
     linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 18rem),
     var(--background);
+}
+
+.selectable-row {
+  transition:
+    background-color 150ms var(--ease-out),
+    border-color 150ms var(--ease-out),
+    box-shadow 150ms var(--ease-out),
+    transform 150ms var(--ease-out);
+}
+
+.selectable-row:active {
+  transform: scale(0.99);
+}
+
+.chart-control {
+  transition:
+    background-color 150ms var(--ease-out),
+    color 150ms var(--ease-out),
+    transform 150ms var(--ease-out);
+}
+
+.chart-control:active {
+  transform: scale(0.96);
+}
+
+.marker-callout {
+  opacity: 0;
+  transform: translate(-50%, 2px) scale(0.97);
+  transform-origin: top center;
+  transition:
+    opacity 140ms var(--ease-out),
+    transform 140ms var(--ease-out);
+}
+
+.marker-label {
+  opacity: 0;
+  transform: translateY(2px) scale(0.97);
+  transform-origin: top center;
+  transition:
+    opacity 140ms var(--ease-out),
+    transform 140ms var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .selectable-row:hover {
+    background-color: color-mix(in oklab, var(--muted) 35%, transparent);
+  }
+
+  .chart-control:hover {
+    color: var(--foreground);
+  }
+
+  .marker-group:hover .marker-callout,
+  .marker-group:hover .marker-label {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+
+  .marker-group:hover .marker-label {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .selectable-row,
+  .chart-control,
+  .marker-callout,
+  .marker-label,
+  [data-slot="button"],
+  [data-slot="skeleton"]::before {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
 }
