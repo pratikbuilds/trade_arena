@@ -19,13 +19,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useArenaSnapshot } from "@/hooks/use-arena-snapshot";
 import { usePythChart } from "@/hooks/use-pyth-chart";
-import { AGENTS, DEVNET_GAME } from "@/lib/agent-game";
 import type {
   AgentTrade,
   ArenaAgent,
   ArenaGameSummary,
-  LiveArenaSnapshot,
 } from "@/lib/agent-game";
 import {
   CHART_WINDOWS,
@@ -41,9 +40,9 @@ const MARKET_SYMBOL = "Crypto.BTC/USD";
 const MARKET_LABEL = "BTC / USD";
 const CHART_COLOR = "#e6eadb";
 const ALL_AGENTS = "all";
-const DEFAULT_TRADE_ID = "alpha-1";
+const DEFAULT_TRADE_ID = "";
 const CHART_PLOT_INSET = {
-  top: 57,
+  top: 44,
   right: 82,
   bottom: 72,
   left: 22,
@@ -65,9 +64,65 @@ type TradeWithAgent = {
   trade: AgentTrade;
 };
 
+type ClosedTrade = AgentTrade & {
+  exitPrice: number;
+  pnlUsd: number;
+  closeTx: string;
+  closeOffsetSeconds: number;
+};
+
+type FocusedTradeDot = {
+  id: string;
+  position: ReturnType<typeof markerPosition>;
+  phase: "entry" | "exit";
+};
+
 function formatSignedUsd(value: number): string {
-  const absolute = formatUsd(Math.abs(value));
+  const absValue = Math.abs(value);
+  const absolute =
+    absValue > 0 && absValue < 0.01
+      ? new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency: "USD",
+          minimumFractionDigits: 4,
+          maximumFractionDigits: 4,
+        }).format(absValue)
+      : formatUsd(absValue);
   return value >= 0 ? `+${absolute}` : `-${absolute}`;
+}
+
+function isClosedTrade(trade: AgentTrade): trade is ClosedTrade {
+  return (
+    (trade.status === "closed" || trade.status === undefined) &&
+    typeof trade.exitPrice === "number" &&
+    typeof trade.pnlUsd === "number" &&
+    typeof trade.closeTx === "string" &&
+    typeof trade.closeOffsetSeconds === "number"
+  );
+}
+
+function tradeStatusLabel(trade: AgentTrade): string {
+  if (isClosedTrade(trade)) {
+    return formatSignedUsd(trade.pnlUsd);
+  }
+
+  return trade.status === "pending_close" ? "Closing" : "Open";
+}
+
+function participationLabel(agent: ArenaAgent): string {
+  if (agent.hasOpenPosition || agent.participationStatus === "in_position") {
+    return "In trade";
+  }
+
+  if (
+    agent.participationStatus === "joined" ||
+    agent.participationStatus === "settled" ||
+    agent.trades.length > 0
+  ) {
+    return "Joined";
+  }
+
+  return "Waiting";
 }
 
 function formatRemainingDuration(seconds: number): string {
@@ -85,10 +140,14 @@ function formatRemainingDuration(seconds: number): string {
 }
 
 function formatGameClock(
-  game: ArenaGameSummary,
+  game: ArenaGameSummary | null,
   snapshotUpdatedAt: number | undefined,
   nowMs: number
 ): string {
+  if (!game) {
+    return "MCP";
+  }
+
   if (game.status === "ended") {
     return "Ended";
   }
@@ -114,19 +173,6 @@ function formatGameClock(
       : game.elapsedSeconds;
 
   return formatRemainingDuration(game.durationSeconds - elapsedSeconds);
-}
-
-function isLiveArenaSnapshot(value: unknown): value is LiveArenaSnapshot {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const snapshot = value as Partial<LiveArenaSnapshot>;
-  return (
-    typeof snapshot.updatedAt === "number" &&
-    !!snapshot.game &&
-    Array.isArray(snapshot.agents)
-  );
 }
 
 function visibleCandles(candles: CandlePoint[], start: number, end: number) {
@@ -159,31 +205,57 @@ function candleRangeForOverlay(candles: CandlePoint[], fallbackPrice: number) {
   };
 }
 
+function tradeOpenTime(trade: AgentTrade, chartAnchorTime: number): number {
+  const replayAnchor = chartAnchorTime - 90;
+  return typeof trade.openTime === "number"
+    ? Math.floor(trade.openTime / 1000)
+    : replayAnchor + trade.openOffsetSeconds;
+}
+
+function tradeCloseTime(
+  trade: AgentTrade,
+  chartAnchorTime: number
+): number | null {
+  if (!isClosedTrade(trade)) {
+    return null;
+  }
+
+  const replayAnchor = chartAnchorTime - 90;
+  return typeof trade.closeTime === "number"
+    ? Math.floor(trade.closeTime / 1000)
+    : replayAnchor + trade.closeOffsetSeconds;
+}
+
 function buildReplayMarkers(
   agents: ArenaAgent[],
   chartAnchorTime: number
 ): ReplayMarker[] {
-  const replayAnchor = chartAnchorTime - 90;
-
   return agents.flatMap((agent) =>
-    agent.trades.flatMap((trade) => [
-      {
-        id: `${trade.id}-entry`,
-        agent,
-        trade,
-        phase: "entry" as const,
-        time: replayAnchor + trade.openOffsetSeconds,
-        price: trade.entryPrice,
-      },
-      {
-        id: `${trade.id}-exit`,
-        agent,
-        trade,
-        phase: "exit" as const,
-        time: replayAnchor + trade.closeOffsetSeconds,
-        price: trade.exitPrice,
-      },
-    ])
+    agent.trades.flatMap((trade) => {
+      const markers: ReplayMarker[] = [
+        {
+          id: `${trade.id}-entry`,
+          agent,
+          trade,
+          phase: "entry" as const,
+          time: tradeOpenTime(trade, chartAnchorTime),
+          price: trade.entryPrice,
+        },
+      ];
+
+      if (isClosedTrade(trade)) {
+        markers.push({
+          id: `${trade.id}-exit`,
+          agent,
+          trade,
+          phase: "exit" as const,
+          time: tradeCloseTime(trade, chartAnchorTime) ?? chartAnchorTime,
+          price: trade.exitPrice,
+        });
+      }
+
+      return markers;
+    })
   );
 }
 
@@ -205,6 +277,43 @@ function markerPosition(args: {
   };
 }
 
+function tradeExitPoint(
+  trade: AgentTrade,
+  chartAnchorTime: number
+): { time: number; price: number } | null {
+  if (!isClosedTrade(trade)) {
+    return null;
+  }
+
+  return {
+    time: tradeCloseTime(trade, chartAnchorTime) ?? chartAnchorTime,
+    price: trade.exitPrice,
+  };
+}
+
+function focusedTradeDots(
+  focusedTrade: TradeWithAgent,
+  entryPosition: ReturnType<typeof markerPosition>,
+  exitPosition: ReturnType<typeof markerPosition> | null
+): FocusedTradeDot[] {
+  return [
+    {
+      id: `${focusedTrade.trade.id}-entry`,
+      position: entryPosition,
+      phase: "entry",
+    },
+    ...(exitPosition
+      ? [
+          {
+            id: `${focusedTrade.trade.id}-exit`,
+            position: exitPosition,
+            phase: "exit" as const,
+          },
+        ]
+      : []),
+  ];
+}
+
 function TradeExecutionOverlay({
   markers,
   focusedTrade,
@@ -222,40 +331,46 @@ function TradeExecutionOverlay({
   minPrice: number;
   maxPrice: number;
 }) {
-  const replayAnchor = chartAnchorTime - 90;
   const focusedEntry = focusedTrade
     ? {
-        time: replayAnchor + focusedTrade.trade.openOffsetSeconds,
+        time: tradeOpenTime(focusedTrade.trade, chartAnchorTime),
         price: focusedTrade.trade.entryPrice,
       }
     : null;
   const focusedExit = focusedTrade
-    ? {
-        time: replayAnchor + focusedTrade.trade.closeOffsetSeconds,
-        price: focusedTrade.trade.exitPrice,
-      }
+    ? tradeExitPoint(focusedTrade.trade, chartAnchorTime)
     : null;
+  const visibleFocusedEntry =
+    focusedEntry &&
+    focusedEntry.time >= startTime &&
+    focusedEntry.time <= endTime
+      ? focusedEntry
+      : null;
+  const visibleFocusedExit =
+    focusedExit && focusedExit.time >= startTime && focusedExit.time <= endTime
+      ? focusedExit
+      : null;
   const focusedMarkerIds = focusedTrade
     ? new Set([
         `${focusedTrade.trade.id}-entry`,
-        `${focusedTrade.trade.id}-exit`,
+        ...(visibleFocusedExit ? [`${focusedTrade.trade.id}-exit`] : []),
       ])
     : new Set<string>();
   const entryPosition =
-    focusedEntry &&
+    visibleFocusedEntry &&
     markerPosition({
-      time: focusedEntry.time,
-      price: focusedEntry.price,
+      time: visibleFocusedEntry.time,
+      price: visibleFocusedEntry.price,
       startTime,
       endTime,
       minPrice,
       maxPrice,
     });
   const exitPosition =
-    focusedExit &&
+    visibleFocusedExit &&
     markerPosition({
-      time: focusedExit.time,
-      price: focusedExit.price,
+      time: visibleFocusedExit.time,
+      price: visibleFocusedExit.price,
       startTime,
       endTime,
       minPrice,
@@ -269,7 +384,12 @@ function TradeExecutionOverlay({
     >
       <div className="absolute" style={CHART_PLOT_INSET}>
         {markers
-          .filter((marker) => !focusedMarkerIds.has(marker.id))
+          .filter(
+            (marker) =>
+              !focusedMarkerIds.has(marker.id) &&
+              marker.time >= startTime &&
+              marker.time <= endTime
+          )
           .map((marker) => {
             const isEntry = marker.phase === "entry";
             const position = markerPosition({
@@ -288,11 +408,12 @@ function TradeExecutionOverlay({
                 style={position}
               >
                 <span
-                  className={`block size-2.5 rounded-full border border-background ${
-                    isEntry ? "bg-primary" : "bg-[#d98585]"
+                  className={`block size-2.5 rounded-full ${
+                    isEntry ? "border border-background" : "border-2 bg-card"
                   }`}
                   style={{
                     backgroundColor: isEntry ? marker.agent.color : undefined,
+                    borderColor: isEntry ? undefined : marker.agent.color,
                   }}
                 />
                 <span className="marker-callout absolute left-1/2 top-full mt-1 whitespace-nowrap rounded border border-border/70 bg-background/95 px-1.5 py-0.5 font-mono text-[10px] text-foreground">
@@ -302,48 +423,48 @@ function TradeExecutionOverlay({
             );
           })}
 
-        {focusedTrade && entryPosition && exitPosition ? (
+        {focusedTrade && entryPosition ? (
           <>
-            <svg className="absolute inset-0 h-full w-full overflow-visible">
-              <line
-                stroke={focusedTrade.agent.color}
-                strokeDasharray="4 3"
-                strokeLinecap="round"
-                strokeWidth="1.5"
-                x1={entryPosition.left}
-                x2={exitPosition.left}
-                y1={entryPosition.top}
-                y2={exitPosition.top}
-              />
-            </svg>
+            {exitPosition ? (
+              <svg className="absolute inset-0 h-full w-full overflow-visible">
+                <line
+                  stroke={focusedTrade.agent.color}
+                  strokeDasharray="4 3"
+                  strokeLinecap="round"
+                  strokeWidth="1.5"
+                  x1={entryPosition.left}
+                  x2={exitPosition.left}
+                  y1={entryPosition.top}
+                  y2={exitPosition.top}
+                />
+              </svg>
+            ) : null}
 
-            {[
-              {
-                label: "Entry",
-                price: focusedTrade.trade.entryPrice,
-                position: entryPosition,
-                entry: true,
-              },
-              {
-                label: "Exit",
-                price: focusedTrade.trade.exitPrice,
-                position: exitPosition,
-                entry: false,
-              },
-            ].map((marker) => (
+            {focusedTradeDots(
+              focusedTrade,
+              entryPosition,
+              exitPosition || null
+            ).map((marker) => (
               <div
-                key={marker.label}
+                key={marker.id}
                 className="pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2"
                 style={{ left: marker.position.left, top: marker.position.top }}
               >
                 <span
-                  className={`block size-3 rounded-full border-2 border-background ${
-                    marker.entry ? "bg-primary" : "bg-[#d98585]"
+                  className={`block size-3 rounded-full ${
+                    marker.phase === "entry"
+                      ? "border-2 border-background"
+                      : "border-2 bg-card"
                   }`}
                   style={{
-                    backgroundColor: marker.entry
-                      ? focusedTrade.agent.color
-                      : undefined,
+                    backgroundColor:
+                      marker.phase === "entry"
+                        ? focusedTrade.agent.color
+                        : undefined,
+                    borderColor:
+                      marker.phase === "exit"
+                        ? focusedTrade.agent.color
+                        : undefined,
                   }}
                 />
               </div>
@@ -357,6 +478,7 @@ function TradeExecutionOverlay({
 
 function AgentSidebar({
   activeAgentId,
+  allTradeCount,
   agents,
   focusedTrade,
   tradeRows,
@@ -364,13 +486,20 @@ function AgentSidebar({
   onSelectTrade,
 }: {
   activeAgentId: ActiveAgentId;
+  allTradeCount: number;
   agents: ArenaAgent[];
   focusedTrade: TradeWithAgent | null;
   tradeRows: TradeWithAgent[];
   onSelectAgent: (id: ActiveAgentId) => void;
   onSelectTrade: (agent: ArenaAgent, trade: AgentTrade) => void;
 }) {
-  const liveCount = agents.filter((agent) => agent.trades.length > 0).length;
+  const liveCount = agents.filter(
+    (agent) =>
+      agent.participationStatus === "joined" ||
+      agent.participationStatus === "in_position" ||
+      agent.participationStatus === "settled" ||
+      agent.trades.length > 0
+  ).length;
   const compactTradeRows = focusedTrade
     ? [
         focusedTrade,
@@ -397,17 +526,21 @@ function AgentSidebar({
           type="button"
         >
           <span className="flex items-center gap-2">
-            <Users aria-hidden="true" className="size-3 text-muted-foreground" />
+            <Users
+              aria-hidden="true"
+              className="size-3 text-muted-foreground"
+            />
             <span className="text-sm">All</span>
           </span>
           <span className="font-mono text-xs text-muted-foreground">
-            {tradeRows.length} trades
+            {allTradeCount} trades
           </span>
         </button>
 
         {agents.map((agent) => {
           const isPositive = agent.realizedPnlUsd >= 0;
           const isSelected = agent.id === activeAgentId;
+          const participation = participationLabel(agent);
 
           return (
             <button
@@ -426,12 +559,17 @@ function AgentSidebar({
                 />
                 <span className="truncate text-sm">{agent.name}</span>
               </span>
-              <span
-                className={`font-mono text-xs ${
-                  isPositive ? "text-[#9ad48c]" : "text-[#d98585]"
-                }`}
-              >
-                {formatSignedUsd(agent.realizedPnlUsd)}
+              <span className="flex shrink-0 items-center gap-2">
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  {participation}
+                </span>
+                <span
+                  className={`font-mono text-xs ${
+                    isPositive ? "text-[#9ad48c]" : "text-[#d98585]"
+                  }`}
+                >
+                  {formatSignedUsd(agent.realizedPnlUsd)}
+                </span>
               </span>
             </button>
           );
@@ -443,7 +581,8 @@ function AgentSidebar({
         <div className="grid gap-px overflow-auto">
           {compactTradeRows.map(({ agent, trade }) => {
             const isActive = focusedTrade?.trade.id === trade.id;
-            const isPositive = trade.pnlUsd >= 0;
+            const isClosed = isClosedTrade(trade);
+            const isPositive = isClosed ? trade.pnlUsd >= 0 : true;
 
             return (
               <button
@@ -466,10 +605,14 @@ function AgentSidebar({
                 </span>
                 <span
                   className={`font-mono text-xs ${
-                    isPositive ? "text-[#9ad48c]" : "text-[#d98585]"
+                    isClosed
+                      ? isPositive
+                        ? "text-[#9ad48c]"
+                        : "text-[#d98585]"
+                      : "text-primary"
                   }`}
                 >
-                  {formatSignedUsd(trade.pnlUsd)}
+                  {tradeStatusLabel(trade)}
                 </span>
               </button>
             );
@@ -549,63 +692,26 @@ function ChartLoadingState() {
 export function MarketChart() {
   const [hoverPoint, setHoverPoint] = useState<HoverPoint | null>(null);
   const [displayMode, setDisplayMode] = useState<"line" | "candle">("candle");
-  const [activeAgentId, setActiveAgentId] = useState<ActiveAgentId>("alpha");
+  const [activeAgentId, setActiveAgentId] = useState<ActiveAgentId>(ALL_AGENTS);
   const [activeTradeId, setActiveTradeId] = useState(DEFAULT_TRADE_ID);
   const [fallbackNow] = useState(() => Math.floor(Date.now() / 1000));
-  const [liveArena, setLiveArena] = useState<LiveArenaSnapshot | null>(null);
   const [clockNowMs, setClockNowMs] = useState(() => Date.now());
+  const {
+    snapshot,
+    status: snapshotStatus,
+    error: snapshotError,
+    retry: retrySnapshot,
+  } = useArenaSnapshot();
   const {
     candles,
     error,
     retry,
     selectedWindow,
     setSelectedWindow,
-    status,
+    status: pythStatus,
   } = usePythChart({
     symbol: MARKET_SYMBOL,
   });
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadLiveArena() {
-      try {
-        const response = await fetch(`/live-arena.json?ts=${Date.now()}`, {
-          cache: "no-store",
-        });
-
-        if (!response.ok) {
-          if (!cancelled) {
-            setLiveArena(null);
-          }
-          return;
-        }
-
-        const payload = (await response.json()) as unknown;
-        if (!cancelled) {
-          setLiveArena((current) => {
-            if (!isLiveArenaSnapshot(payload)) {
-              return null;
-            }
-
-            return current?.updatedAt === payload.updatedAt ? current : payload;
-          });
-        }
-      } catch {
-        if (!cancelled) {
-          setLiveArena(null);
-        }
-      }
-    }
-
-    void loadLiveArena();
-    const intervalId = window.setInterval(loadLiveArena, 5000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, []);
 
   useEffect(() => {
     const intervalId = window.setInterval(
@@ -628,8 +734,8 @@ export function MarketChart() {
   const hoverValue = hoverPoint?.value ?? latestPrice;
   const chartAnchorTime =
     liveCandle?.time ?? committed.at(-1)?.time ?? fallbackNow;
-  const agents = liveArena?.agents.length ? liveArena.agents : AGENTS;
-  const game = liveArena?.game ?? DEVNET_GAME;
+  const agents = snapshot?.agents ?? [];
+  const game = snapshot?.game ?? null;
   const selectedAgents =
     activeAgentId === ALL_AGENTS
       ? agents
@@ -649,14 +755,23 @@ export function MarketChart() {
   const replayStart = chartAnchorTime - selectedWindow.secs;
   const replayEnd = chartAnchorTime;
   const candlesInView = visibleCandles(candles, replayStart, replayEnd);
-  const replayPriceRange = candleRangeForOverlay(candlesInView, latestPrice);
+  const visibleReplayMarkers = replayMarkers.filter(
+    (marker) => marker.time >= replayStart && marker.time <= replayEnd
+  );
+  const markerPrices = visibleReplayMarkers.map((marker) => ({
+    time: marker.time,
+    open: marker.price,
+    high: marker.price,
+    low: marker.price,
+    close: marker.price,
+  }));
+  const replayPriceRange = candleRangeForOverlay(
+    [...candlesInView, ...markerPrices],
+    latestPrice
+  );
   const minReplayPrice = replayPriceRange.min;
   const maxReplayPrice = replayPriceRange.max;
-  const gameClockLabel = formatGameClock(
-    game,
-    liveArena?.updatedAt,
-    clockNowMs
-  );
+  const gameClockLabel = formatGameClock(game, snapshot?.updatedAt, clockNowMs);
   const livelineReference =
     focusedTrade && activeAgentId !== ALL_AGENTS
       ? {
@@ -667,11 +782,11 @@ export function MarketChart() {
         }
       : undefined;
 
-  if (status === "loading" && candles.length === 0) {
+  if (pythStatus === "loading" && candles.length === 0) {
     return <ChartLoadingState />;
   }
 
-  if (status === "error" && candles.length === 0) {
+  if (pythStatus === "error" && candles.length === 0) {
     return (
       <Card className="rounded-[4px] border border-border/80 bg-card py-0 shadow-none">
         <CardHeader className="border-b border-border/80 py-6">
@@ -696,7 +811,7 @@ export function MarketChart() {
     );
   }
 
-  if (status === "empty") {
+  if (pythStatus === "empty") {
     return (
       <Card className="rounded-[4px] border border-border/80 bg-card py-0 shadow-none">
         <CardHeader className="border-b border-border/80 py-6">
@@ -732,7 +847,9 @@ export function MarketChart() {
               >
                 {priceDelta}
               </span>
-              <span className="text-xs text-muted-foreground">{MARKET_LABEL}</span>
+              <span className="text-xs text-muted-foreground">
+                {MARKET_LABEL}
+              </span>
             </div>
 
             <div className="flex items-center gap-3">
@@ -841,14 +958,14 @@ export function MarketChart() {
                   chartAnchorTime={chartAnchorTime}
                   endTime={replayEnd}
                   focusedTrade={focusedTrade}
-                  markers={replayMarkers}
+                  markers={visibleReplayMarkers}
                   maxPrice={maxReplayPrice}
                   minPrice={minReplayPrice}
                   startTime={replayStart}
                 />
               </div>
 
-              {status === "error" && candles.length > 0 ? (
+              {pythStatus === "error" && candles.length > 0 ? (
                 <div className="mt-2 flex items-start gap-3 rounded-[4px] border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
                   <AlertCircle
                     aria-hidden="true"
@@ -865,10 +982,42 @@ export function MarketChart() {
                   </div>
                 </div>
               ) : null}
+
+              {snapshotStatus === "error" || snapshotStatus === "empty" ? (
+                <div className="mt-2 flex items-start justify-between gap-3 rounded-[4px] border border-border/70 bg-background/70 px-4 py-3 text-sm">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle
+                      aria-hidden="true"
+                      className="mt-0.5 size-4 text-primary"
+                    />
+                    <div className="space-y-1">
+                      <p className="font-medium text-foreground">
+                        MCP arena feed unavailable.
+                      </p>
+                      <p className="text-muted-foreground">
+                        {snapshotStatus === "empty"
+                          ? "No active or joinable arena was returned by the MCP server."
+                          : snapshotError ??
+                            "The UI is waiting for the MCP snapshot endpoint."}
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    className="shrink-0"
+                    onClick={retrySnapshot}
+                    size="sm"
+                    variant="secondary"
+                  >
+                    <RefreshCcw aria-hidden="true" data-icon="inline-start" />
+                    Retry
+                  </Button>
+                </div>
+              ) : null}
             </div>
 
             <AgentSidebar
               activeAgentId={activeAgentId}
+              allTradeCount={allTradeRows.length}
               agents={agents}
               focusedTrade={focusedTrade}
               tradeRows={selectedTradeRows}

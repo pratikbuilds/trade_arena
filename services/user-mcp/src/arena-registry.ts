@@ -1,7 +1,7 @@
 import { PublicKey, type AccountInfo } from "@solana/web3.js";
 import { config } from "./config";
 import { DELEGATION_PROGRAM_ID, findGamePDA } from "./pdas";
-import { baseConnection } from "./transactions";
+import { baseConnection, erConnection } from "./transactions";
 
 const GAME_ACCOUNT_DISCRIMINATOR = Buffer.from([
   27, 90, 166, 125, 74, 100, 121, 18,
@@ -138,6 +138,7 @@ function arenaFromGameAccount(args: {
   pubkey: PublicKey;
   info: AccountInfo<Buffer>;
   programId: PublicKey;
+  delegated?: boolean;
 }): Arena {
   const game = decodeGameAccount(args.info.data);
   return {
@@ -147,7 +148,7 @@ function arenaFromGameAccount(args: {
     name: `Trade Arena #${game.game_id}`,
     description: "",
     program_id: args.programId.toBase58(),
-    delegated: args.info.owner.equals(DELEGATION_PROGRAM_ID),
+    delegated: args.delegated ?? args.info.owner.equals(DELEGATION_PROGRAM_ID),
   };
 }
 
@@ -165,6 +166,25 @@ function isExpectedGamePda(arena: Arena, programId: PublicKey): boolean {
     programId
   );
   return expectedPda.equals(new PublicKey(arena.game_pda));
+}
+
+async function refreshDelegatedArenaFromEr(
+  arena: Arena,
+  programId: PublicKey
+): Promise<Arena> {
+  if (!arena.delegated) return arena;
+
+  const gamePda = new PublicKey(arena.game_pda);
+  const info = await erConnection().getAccountInfo(gamePda, "confirmed");
+  if (!info || !isGameAccount(info)) return arena;
+
+  const refreshed = arenaFromGameAccount({
+    pubkey: gamePda,
+    info,
+    programId,
+    delegated: true,
+  });
+  return isExpectedGamePda(refreshed, programId) ? refreshed : arena;
 }
 
 export async function listArenas(
@@ -189,7 +209,13 @@ export async function listArenas(
     byPda.set(arena.game_pda, arena);
   }
 
-  const arenas = [...byPda.values()].sort((a, b) => b.game_id - a.game_id);
+  const arenas = (
+    await Promise.all(
+      [...byPda.values()].map((arena) =>
+        refreshDelegatedArenaFromEr(arena, programId)
+      )
+    )
+  ).sort((a, b) => b.game_id - a.game_id);
   if (!status || status === "all") return arenas;
   if (status === "joinable") return arenas.filter(isArenaJoinable);
   return arenas.filter((arena) => arena.status === status);
@@ -220,5 +246,5 @@ export async function getArenaByPubkey(
   if (!isExpectedGamePda(arena, programId)) {
     throw new Error(`Game account ${gamePubkey} does not match its PDA seeds`);
   }
-  return arena;
+  return refreshDelegatedArenaFromEr(arena, programId);
 }

@@ -116,6 +116,9 @@ The MCP service lives in `services/user-mcp` and exposes tools for:
 - `get_arena_details`
 - `get_game_status`
 - `get_user_trades`
+- `get_player_state`
+- `get_arena_snapshot`
+- `record_agent_profile`
 - `prepare_join_arena`
 - `prepare_trade_position`
 

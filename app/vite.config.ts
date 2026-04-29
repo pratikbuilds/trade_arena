@@ -12,6 +12,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/pyth/, ""),
       },
+      "/api/arena": {
+        target: "http://127.0.0.1:3000",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/arena/, ""),
+      },
     },
   },
   preview: {
@@ -20,6 +25,11 @@ export default defineConfig({
         target: "https://pyth.dourolabs.app/v1/fixed_rate@200ms",
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/pyth/, ""),
+      },
+      "/api/arena": {
+        target: "http://127.0.0.1:3000",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/arena/, ""),
       },
     },
   },

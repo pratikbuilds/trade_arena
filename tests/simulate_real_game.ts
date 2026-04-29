@@ -67,9 +67,9 @@ const REPORT_PATH =
     "artifacts",
     `simulation-instruction-log-${Date.now()}.md`
   );
-const LIVE_SNAPSHOT_PATH =
-  process.env.SIM_LIVE_SNAPSHOT_PATH ??
-  path.join(process.cwd(), "app", "public", "live-arena.json");
+const SIMULATION_SNAPSHOT_PATH =
+  process.env.SIMULATION_SNAPSHOT_PATH ??
+  path.join(process.cwd(), "artifacts", "simulation-arena-snapshot.json");
 
 type SideArg = { long: {} } | { short: {} };
 type ClusterKind = "devnet" | "magicblock-er";
@@ -516,6 +516,7 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
   const tradeLedger: TradeRecord[] = [];
   const instructionLog: InstructionRecord[] = [];
   const openTradeByPlayer = new Map<string, TradeRecord>();
+  const joinedPlayers = new Set<string>();
   const priceHistory: number[] = [];
 
   let usdcMint: anchor.web3.PublicKey;
@@ -554,6 +555,15 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
         (sum, trade) => sum + (trade.pnlUsd ?? 0),
         0
       );
+      const playerAddress = player.publicKey.toBase58();
+      const hasOpenPosition = openTradeByPlayer.has(playerAddress);
+      const participationStatus = joinedPlayers.has(playerAddress)
+        ? status === "ended"
+          ? "settled"
+          : hasOpenPosition
+          ? "in_position"
+          : "joined"
+        : "not_joined";
 
       return {
         id: name,
@@ -561,32 +571,48 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
         handle: config.handle,
         thesis: config.thesis,
         color: config.color,
-        player: player.publicKey.toBase58(),
-        session: player.publicKey.toBase58(),
+        player: playerAddress,
+        session: playerAddress,
+        participationStatus,
+        hasOpenPosition,
         virtualCashUsd: 10_000 + realizedPnlUsd,
         realizedPnlUsd,
-        trades: playerTrades
-          .filter((trade) => trade.closeSig)
-          .map((trade) => ({
+        trades: playerTrades.map((trade) => {
+          const closeSig = trade.closeSig;
+          const isClosed = typeof closeSig === "string";
+          const latestPrice =
+            priceHistory.length > 0
+              ? priceHistory[priceHistory.length - 1]
+              : trade.entryUsd;
+
+          return {
             id: `${name}-${trade.cycle}`,
             cycle: trade.cycle,
             side: trade.side === "LONG" ? "long" : "short",
+            status: isClosed ? "closed" : "open",
             notionalUsd: trade.collateralUsd,
             sizeBtc: trade.sizeBtc,
             entryPrice: trade.entryUsd,
-            exitPrice: trade.exitUsd ?? trade.entryUsd,
-            pnlUsd: trade.pnlUsd ?? 0,
             openTx: trade.openSig,
-            closeTx: trade.closeSig ?? trade.openSig,
             openOffsetSeconds:
               Math.floor(trade.openedAtMs / 1000) -
               Math.floor(nowMs / 1000) +
               90,
-            closeOffsetSeconds:
-              Math.floor((trade.closedAtMs ?? trade.openedAtMs) / 1000) -
-              Math.floor(nowMs / 1000) +
-              90,
-          })),
+            ...(isClosed
+              ? {
+                  exitPrice: trade.exitUsd ?? trade.entryUsd,
+                  pnlUsd: trade.pnlUsd ?? 0,
+                  closeTx: closeSig,
+                  closeOffsetSeconds:
+                    Math.floor((trade.closedAtMs ?? trade.openedAtMs) / 1000) -
+                    Math.floor(nowMs / 1000) +
+                    90,
+                }
+              : {
+                  markPrice: latestPrice,
+                }),
+          };
+        }),
       };
     });
 
@@ -609,8 +635,10 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
       agents,
     };
 
-    fs.mkdirSync(path.dirname(LIVE_SNAPSHOT_PATH), { recursive: true });
-    fs.writeFileSync(LIVE_SNAPSHOT_PATH, JSON.stringify(snapshot, null, 2));
+    fs.mkdirSync(path.dirname(SIMULATION_SNAPSHOT_PATH), { recursive: true });
+    const tempSnapshotPath = `${SIMULATION_SNAPSHOT_PATH}.tmp`;
+    fs.writeFileSync(tempSnapshotPath, JSON.stringify(snapshot, null, 2));
+    fs.renameSync(tempSnapshotPath, SIMULATION_SNAPSHOT_PATH);
   }
 
   function recordInstruction(
@@ -803,6 +831,7 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
         })
         .signers([player])
         .rpc();
+      joinedPlayers.add(player.publicKey.toBase58());
       recordInstruction(
         `join_game_${playerNames[player.publicKey.toBase58()]}`,
         "devnet",

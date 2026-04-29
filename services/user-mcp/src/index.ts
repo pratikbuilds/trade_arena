@@ -10,6 +10,9 @@ import { logger } from "./logger";
 import { listArenas, getArenaByPubkey, isArenaFull } from "./arena-registry";
 import { getGameStatusByPubkey } from "./game-status";
 import { getUserTrades } from "./trade-history";
+import { getPlayerState } from "./player-state";
+import { getArenaSnapshot, invalidateArenaSnapshot } from "./arena-snapshot";
+import { recordAgentProfile } from "./agent-profiles";
 import {
   buildJoinArenaTransaction,
   buildTradePositionTransaction,
@@ -26,6 +29,11 @@ function textContent(text: string) {
 
 function errorContent(text: string) {
   return { ...textContent(text), isError: true };
+}
+
+function jsonResponse(res: ServerResponse, statusCode: number, body: unknown) {
+  res.writeHead(statusCode, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(body));
 }
 
 function buildMcpServer(): McpServer {
@@ -106,6 +114,89 @@ function buildMcpServer(): McpServer {
       }
 
       return textContent(JSON.stringify(result));
+    }
+  );
+
+  server.tool(
+    "get_player_state",
+    "Read a player's current PlayerState/portfolio for a game. Checks the Ephemeral Rollup first, then falls back to the base layer.",
+    {
+      game_pubkey: z.string().min(32),
+      player: z.string().min(32),
+    },
+    async ({ game_pubkey, player: playerStr }) => {
+      let gamePubkey: PublicKey;
+      let player: PublicKey;
+      try {
+        gamePubkey = new PublicKey(game_pubkey);
+        player = new PublicKey(playerStr);
+      } catch {
+        return errorContent(
+          JSON.stringify({ error: "Invalid game_pubkey or player pubkey" })
+        );
+      }
+
+      const result = await getPlayerState({ gamePubkey, player });
+      return textContent(JSON.stringify(result));
+    }
+  );
+
+  server.tool(
+    "get_arena_snapshot",
+    "Build a UI-ready live snapshot from MCP-visible on-chain game, PlayerState, and ER trade history.",
+    { game_pubkey: z.string().min(32).optional() },
+    async ({ game_pubkey }) => {
+      const result = await getArenaSnapshot(game_pubkey);
+      if (!result) {
+        return errorContent(JSON.stringify({ error: "No arena found" }));
+      }
+
+      return textContent(JSON.stringify(result));
+    }
+  );
+
+  server.tool(
+    "record_agent_profile",
+    "Register local strategy metadata for a live MCP-controlled player so UI snapshots preserve distinct agent identity.",
+    {
+      game_pubkey: z.string().min(32),
+      player: z.string().min(32),
+      session: z.string().min(32).optional(),
+      id: z.string().min(1),
+      name: z.string().min(1),
+      handle: z.string().min(1),
+      thesis: z.string().min(1),
+      color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+      order: z.number().int().nonnegative(),
+    },
+    async ({
+      game_pubkey,
+      player,
+      session,
+      id,
+      name,
+      handle,
+      thesis,
+      color,
+      order,
+    }) => {
+      try {
+        new PublicKey(game_pubkey);
+        new PublicKey(player);
+        if (session) new PublicKey(session);
+      } catch {
+        return errorContent(
+          JSON.stringify({ error: "Invalid game, player, or session pubkey" })
+        );
+      }
+
+      const profile = recordAgentProfile({
+        gamePubkey: game_pubkey,
+        player,
+        profile: { id, name, handle, thesis, color, session, order },
+      });
+      invalidateArenaSnapshot(game_pubkey);
+      return textContent(JSON.stringify({ ok: true, profile }));
     }
   );
 
@@ -305,11 +396,23 @@ function buildMcpServer(): McpServer {
 const httpServer = http.createServer(
   async (req: IncomingMessage, res: ServerResponse) => {
     try {
-      const path = new URL(req.url ?? "/", "http://localhost").pathname;
+      const url = new URL(req.url ?? "/", "http://localhost");
+      const path = url.pathname;
 
       if (req.method === "GET" && path === "/health") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok" }));
+        jsonResponse(res, 200, { status: "ok" });
+        return;
+      }
+
+      if (req.method === "GET" && path === "/snapshot") {
+        const gamePubkey = url.searchParams.get("game_pubkey") ?? undefined;
+        const snapshot = await getArenaSnapshot(gamePubkey);
+        if (!snapshot) {
+          jsonResponse(res, 404, { error: "No arena found" });
+          return;
+        }
+
+        jsonResponse(res, 200, snapshot);
         return;
       }
 
@@ -323,13 +426,11 @@ const httpServer = http.createServer(
         return;
       }
 
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Not found" }));
+      jsonResponse(res, 404, { error: "Not found" });
     } catch (err) {
       logger.error("Unhandled request error", { error: String(err) });
       if (!res.headersSent) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Internal server error" }));
+        jsonResponse(res, 500, { error: "Internal server error" });
       }
     }
   }
