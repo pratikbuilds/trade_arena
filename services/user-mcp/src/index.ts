@@ -7,7 +7,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { config } from "./config";
 import { logger } from "./logger";
-import { listArenas, getArenaByPubkey } from "./arena-registry";
+import { listArenas, getArenaByPubkey, isArenaFull } from "./arena-registry";
 import { getGameStatusByPubkey } from "./game-status";
 import { getUserTrades } from "./trade-history";
 import {
@@ -133,6 +133,14 @@ function buildMcpServer(): McpServer {
         return errorContent(
           JSON.stringify({
             error: `Game '${game_pubkey}' is not joinable (status: ${arena.status})`,
+          })
+        );
+      }
+
+      if (isArenaFull(arena)) {
+        return errorContent(
+          JSON.stringify({
+            error: `Game '${game_pubkey}' is full (${arena.player_count}/${arena.max_players} players)`,
           })
         );
       }

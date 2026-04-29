@@ -1,5 +1,6 @@
 import { expect } from "chai";
-import { PublicKey } from "@solana/web3.js";
+import { Connection, PublicKey, type AccountInfo } from "@solana/web3.js";
+import { DELEGATION_PROGRAM_ID, findGamePDA } from "../src/pdas";
 
 const GAME_DISCRIMINATOR = Buffer.from([27, 90, 166, 125, 74, 100, 121, 18]);
 
@@ -19,19 +20,22 @@ function writeI64(data: Buffer, offset: number, value: bigint): number {
 }
 
 function buildGameBuffer(args?: {
+  creator?: PublicKey;
+  gameId?: bigint;
+  playerCount?: number;
+  maxPlayers?: number;
   status?: number;
   winner?: PublicKey;
 }): Buffer {
   const data = Buffer.alloc(196);
   GAME_DISCRIMINATOR.copy(data, 0);
+  const creator =
+    args?.creator ??
+    new PublicKey("9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM");
 
   let offset = 8;
-  offset = writePubkey(
-    data,
-    offset,
-    new PublicKey("9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM")
-  );
-  offset = writeU64(data, offset, 7n);
+  offset = writePubkey(data, offset, creator);
+  offset = writeU64(data, offset, args?.gameId ?? 7n);
   offset = writePubkey(
     data,
     offset,
@@ -42,9 +46,9 @@ function buildGameBuffer(args?: {
   offset = writeI64(data, offset, 1_714_000_000n);
   data.writeUInt8(args?.status ?? 0, offset);
   offset += 1;
-  data.writeUInt32LE(2, offset);
+  data.writeUInt32LE(args?.playerCount ?? 2, offset);
   offset += 4;
-  data.writeUInt32LE(8, offset);
+  data.writeUInt32LE(args?.maxPlayers ?? 8, offset);
   offset += 4;
   offset = writeU64(data, offset, 2_000_000n);
   offset = writePubkey(
@@ -67,6 +71,16 @@ function buildGameBuffer(args?: {
   offset += 1;
   data.writeUInt8(253, offset);
   return data;
+}
+
+function accountInfo(data: Buffer, owner: PublicKey): AccountInfo<Buffer> {
+  return {
+    data,
+    owner,
+    executable: false,
+    lamports: 1,
+    rentEpoch: 1,
+  };
 }
 
 describe("decodeGameAccount", () => {
@@ -110,6 +124,20 @@ describe("decodeGameAccount", () => {
     expect(game.winner).to.equal(winner.toBase58());
   });
 
+  it("does not treat full on-chain joinable games as MCP-joinable", async () => {
+    const { decodeGameAccount, isArenaJoinable } = await import(
+      "../src/arena-registry"
+    );
+    const game = decodeGameAccount(
+      buildGameBuffer({ playerCount: 8, maxPlayers: 8 })
+    );
+
+    expect(game.status).to.equal("joinable");
+    expect(game.player_count).to.equal(8);
+    expect(game.max_players).to.equal(8);
+    expect(isArenaJoinable(game)).to.equal(false);
+  });
+
   it("rejects buffers that are not Game accounts", async () => {
     const { decodeGameAccount } = await import("../src/arena-registry");
     const data = buildGameBuffer();
@@ -118,5 +146,67 @@ describe("decodeGameAccount", () => {
     expect(() => decodeGameAccount(data)).to.throw(
       "Account is not a Trade Arena Game account"
     );
+  });
+});
+
+describe("listArenas", () => {
+  const originalGetProgramAccounts = Connection.prototype.getProgramAccounts;
+  const programId = new PublicKey(
+    "ETZ1wJJihV6xfcf9GtCp9sNp2cv6cMGeyuFPSVHQJ4C5"
+  );
+  const creator = new PublicKey("9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM");
+
+  before(() => {
+    process.env.TRADE_ARENA_BASE_RPC_URL = "https://api.devnet.solana.com";
+    process.env.TRADE_ARENA_ER_RPC_URL = "https://devnet.magicblock.app";
+    process.env.TRADE_ARENA_PROGRAM_ID = programId.toBase58();
+  });
+
+  afterEach(() => {
+    Connection.prototype.getProgramAccounts = originalGetProgramAccounts;
+  });
+
+  it("excludes full games from joinable results", async () => {
+    const openGameId = 8n;
+    const fullGameId = 7n;
+    const openPda = findGamePDA(creator, Number(openGameId), programId);
+    const fullPda = findGamePDA(creator, Number(fullGameId), programId);
+    Connection.prototype.getProgramAccounts = async function (owner) {
+      if (owner.equals(DELEGATION_PROGRAM_ID)) return [];
+      if (!owner.equals(programId)) return [];
+      return [
+        {
+          pubkey: fullPda,
+          account: accountInfo(
+            buildGameBuffer({
+              creator,
+              gameId: fullGameId,
+              playerCount: 8,
+              maxPlayers: 8,
+            }),
+            programId
+          ),
+        },
+        {
+          pubkey: openPda,
+          account: accountInfo(
+            buildGameBuffer({
+              creator,
+              gameId: openGameId,
+              playerCount: 7,
+              maxPlayers: 8,
+            }),
+            programId
+          ),
+        },
+      ];
+    };
+
+    const { listArenas } = await import("../src/arena-registry");
+    const arenas = await listArenas("joinable");
+
+    expect(arenas.map((arena) => arena.game_id)).to.deep.equal([
+      Number(openGameId),
+    ]);
   });
 });

@@ -32,6 +32,8 @@ export type Arena = {
   delegated: boolean;
 };
 
+type ArenaJoinability = Pick<Arena, "status" | "player_count" | "max_players">;
+
 type DecodedGame = Omit<
   Arena,
   | "game_pubkey"
@@ -65,6 +67,16 @@ function statusFromVariant(value: number): ArenaStatus {
     default:
       throw new Error(`Unknown GameStatus variant ${value}`);
   }
+}
+
+export function isArenaFull(
+  arena: Pick<Arena, "player_count" | "max_players">
+): boolean {
+  return arena.player_count >= arena.max_players;
+}
+
+export function isArenaJoinable(arena: ArenaJoinability): boolean {
+  return arena.status === "joinable" && !isArenaFull(arena);
 }
 
 export function decodeGameAccount(data: Buffer): DecodedGame {
@@ -179,6 +191,7 @@ export async function listArenas(
 
   const arenas = [...byPda.values()].sort((a, b) => b.game_id - a.game_id);
   if (!status || status === "all") return arenas;
+  if (status === "joinable") return arenas.filter(isArenaJoinable);
   return arenas.filter((arena) => arena.status === status);
 }
 
