@@ -56,6 +56,41 @@ Run the real-game simulation:
 yarn ts-mocha -p ./tsconfig.json -t 1000000 tests/simulate_real_game.ts
 ```
 
+Create a game as the admin against the configured devnet program:
+
+```bash
+yarn launch:game:create
+```
+
+View a created game's on-chain state:
+
+```bash
+yarn launch:game:status <GAME_PDA>
+```
+
+After at least two players have joined, delegate the game account to MagicBlock
+so `start_game`, `trade_position`, and `end_game` can run on the ER:
+
+```bash
+yarn launch:game:delegate <GAME_PDA>
+```
+
+For a shorter smoke-create command:
+
+```bash
+yarn launch:game:quick
+```
+
+The launch runner calls `create_game` directly and accepts
+`LAUNCH_GAME_ID`, `LAUNCH_ENTRY_FEE_MICRO_USDC`,
+`LAUNCH_DURATION_SECONDS`, `LAUNCH_MAX_PLAYERS`, `LAUNCH_TOKEN_MINT`,
+`TRADE_ARENA_PRICE_FEED`, `ANCHOR_PROVIDER_URL`, and `ANCHOR_WALLET`.
+If `LAUNCH_TOKEN_MINT` is omitted, it creates a devnet test mint for the game.
+The program currently accepts `LAUNCH_DURATION_SECONDS=300` or `900`.
+Delegation is intentionally a separate admin command. The script verifies that
+the current wallet is the game creator before sending `delegate_game`; any
+additional lifecycle rules are enforced by the on-chain program.
+
 `Anchor.toml` is configured for devnet by default and uses the wallet at `~/.config/solana/id.json`.
 
 ## Frontend App
