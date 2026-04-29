@@ -4,7 +4,10 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   TRADE_ARENA_BASE_RPC_URL: z.string().url(),
   TRADE_ARENA_ER_RPC_URL: z.string().url(),
-  TRADE_ARENA_ARENAS_JSON: z.string().min(1),
+  TRADE_ARENA_PROGRAM_ID: z
+    .string()
+    .min(32)
+    .default("ETZ1wJJihV6xfcf9GtCp9sNp2cv6cMGeyuFPSVHQJ4C5"),
 });
 
 export type Config = z.infer<typeof EnvSchema>;

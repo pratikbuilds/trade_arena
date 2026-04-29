@@ -7,10 +7,10 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { config } from "./config";
 import { logger } from "./logger";
-import { listArenas, getArenaById } from "./arena-registry";
-import { findGamePDA } from "./pdas";
+import { listArenas, getArenaByPubkey } from "./arena-registry";
+import { getGameStatusByPubkey } from "./game-status";
+import { getUserTrades } from "./trade-history";
 import {
-  baseConnection,
   buildJoinArenaTransaction,
   buildTradePositionTransaction,
   type TradeAction,
@@ -43,20 +43,20 @@ function buildMcpServer(): McpServer {
     "List available Trade Arena games. Optionally filter by status.",
     { status: z.enum(["joinable", "active", "ended", "all"]).optional() },
     async ({ status }) => {
-      const result = listArenas(status);
+      const result = await listArenas(status);
       return textContent(JSON.stringify(result));
     }
   );
 
   server.tool(
     "get_arena_details",
-    "Get metadata and rules for a specific arena.",
-    { arena_id: z.string().min(1) },
-    async ({ arena_id }) => {
-      const arena = getArenaById(arena_id);
+    "Get metadata and rules for a specific game account.",
+    { game_pubkey: z.string().min(32) },
+    async ({ game_pubkey }) => {
+      const arena = await getArenaByPubkey(game_pubkey);
       if (!arena) {
         return errorContent(
-          JSON.stringify({ error: `Arena '${arena_id}' not found` })
+          JSON.stringify({ error: `Game '${game_pubkey}' not found` })
         );
       }
       return textContent(JSON.stringify(arena));
@@ -65,40 +65,45 @@ function buildMcpServer(): McpServer {
 
   server.tool(
     "get_game_status",
-    "Fetch on-chain status for a specific arena's game account.",
-    { arena_id: z.string().min(1) },
-    async ({ arena_id }) => {
-      const arena = getArenaById(arena_id);
-      if (!arena) {
+    "Fetch on-chain status for a specific game account pubkey.",
+    { game_pubkey: z.string().min(32) },
+    async ({ game_pubkey }) => {
+      const result = await getGameStatusByPubkey(game_pubkey);
+      if (!result) {
         return errorContent(
-          JSON.stringify({ error: `Arena '${arena_id}' not found` })
+          JSON.stringify({ error: `Game '${game_pubkey}' not found` })
         );
       }
+      return textContent(JSON.stringify(result));
+    }
+  );
 
-      let creator: PublicKey;
-      let programId: PublicKey;
+  server.tool(
+    "get_user_trades",
+    "List trade_position transactions made by a user in a game.",
+    {
+      game_pubkey: z.string().min(32),
+      player: z.string().min(32),
+      limit: z.number().int().positive().max(100).optional(),
+    },
+    async ({ game_pubkey, player: playerStr, limit }) => {
+      let player: PublicKey;
       try {
-        creator = new PublicKey(arena.creator);
-        programId = new PublicKey(arena.program_id);
-      } catch (err) {
-        throw new Error("Arena has invalid creator or program_id pubkey", {
-          cause: err,
-        });
+        player = new PublicKey(playerStr);
+      } catch {
+        return errorContent(JSON.stringify({ error: "Invalid player pubkey" }));
       }
 
-      const gamePda = findGamePDA(creator, arena.game_id, programId);
-      const info = await baseConnection().getAccountInfo(gamePda);
-
-      const result = info
-        ? {
-            arena_id,
-            game_pda: gamePda.toBase58(),
-            exists: true,
-            lamports: info.lamports,
-            data_len: info.data.length,
-            owner: info.owner.toBase58(),
-          }
-        : { arena_id, game_pda: gamePda.toBase58(), exists: false };
+      const result = await getUserTrades({
+        gamePubkey: game_pubkey,
+        player,
+        limit,
+      });
+      if (!result) {
+        return errorContent(
+          JSON.stringify({ error: `Game '${game_pubkey}' not found` })
+        );
+      }
 
       return textContent(JSON.stringify(result));
     }
@@ -108,26 +113,26 @@ function buildMcpServer(): McpServer {
     "prepare_join_arena",
     "Build an unsigned join transaction. Sign locally with both `player` and `session_signer` keys.",
     {
-      arena_id: z.string().min(1),
+      game_pubkey: z.string().min(32),
       player: z.string().min(32),
       session_signer: z.string().min(32),
     },
     async ({
-      arena_id,
+      game_pubkey,
       player: playerStr,
       session_signer: sessionSignerStr,
     }) => {
-      const arena = getArenaById(arena_id);
+      const arena = await getArenaByPubkey(game_pubkey);
       if (!arena) {
         return errorContent(
-          JSON.stringify({ error: `Arena '${arena_id}' not found` })
+          JSON.stringify({ error: `Game '${game_pubkey}' not found` })
         );
       }
 
       if (arena.status !== "joinable") {
         return errorContent(
           JSON.stringify({
-            error: `Arena '${arena_id}' is not joinable (status: ${arena.status})`,
+            error: `Game '${game_pubkey}' is not joinable (status: ${arena.status})`,
           })
         );
       }
@@ -151,7 +156,7 @@ function buildMcpServer(): McpServer {
       const request = createRequest({
         action: "join_arena",
         targetRuntime: "base",
-        arenaId: arena_id,
+        gamePubkey: game_pubkey,
         messageHash: messageHash(transaction.serializeMessage()),
       });
 
@@ -175,7 +180,7 @@ function buildMcpServer(): McpServer {
     "prepare_trade_position",
     "Build an unsigned ER trade transaction. Sign locally with `signer` (player or session signer).",
     {
-      arena_id: z.string().min(1),
+      game_pubkey: z.string().min(32),
       player: z.string().min(32),
       signer: z.string().min(32),
       action: z.enum(["increase", "reduce", "close_all"]),
@@ -187,7 +192,7 @@ function buildMcpServer(): McpServer {
       price_feed: z.string().min(32).optional(),
     },
     async ({
-      arena_id,
+      game_pubkey,
       player: playerStr,
       signer: signerStr,
       action,
@@ -195,17 +200,17 @@ function buildMcpServer(): McpServer {
       notional_usdc,
       price_feed: priceFeedStr,
     }) => {
-      const arena = getArenaById(arena_id);
+      const arena = await getArenaByPubkey(game_pubkey);
       if (!arena) {
         return errorContent(
-          JSON.stringify({ error: `Arena '${arena_id}' not found` })
+          JSON.stringify({ error: `Game '${game_pubkey}' not found` })
         );
       }
 
       if (arena.status !== "active") {
         return errorContent(
           JSON.stringify({
-            error: `Arena '${arena_id}' is not active (status: ${arena.status})`,
+            error: `Game '${game_pubkey}' is not active (status: ${arena.status})`,
           })
         );
       }
@@ -265,7 +270,7 @@ function buildMcpServer(): McpServer {
       const request = createRequest({
         action: action === "close_all" ? "close_position" : "place_trade",
         targetRuntime: "er",
-        arenaId: arena_id,
+        gamePubkey: game_pubkey,
         messageHash: messageHash(transaction.serializeMessage()),
       });
 

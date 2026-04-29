@@ -80,6 +80,7 @@ The MCP service lives in `services/user-mcp` and exposes tools for:
 - `list_arenas`
 - `get_arena_details`
 - `get_game_status`
+- `get_user_trades`
 - `prepare_join_arena`
 - `prepare_trade_position`
 
@@ -95,15 +96,31 @@ Required environment variables:
 ```bash
 TRADE_ARENA_BASE_RPC_URL=https://api.devnet.solana.com
 TRADE_ARENA_ER_RPC_URL=<magicblock-er-rpc-url>
-TRADE_ARENA_ARENAS_JSON='[...]'
+TRADE_ARENA_PROGRAM_ID=ETZ1wJJihV6xfcf9GtCp9sNp2cv6cMGeyuFPSVHQJ4C5
 PORT=3000
 ```
+
+`TRADE_ARENA_PROGRAM_ID` defaults to the deployed devnet program id above. The
+MCP server discovers arenas by scanning real `Game` accounts on the configured
+base RPC endpoint, including delegated accounts owned by the MagicBlock
+delegation program; it does not read a local arena JSON registry.
 
 Run MCP service tests:
 
 ```bash
 yarn mcp:test
 ```
+
+Run the live MCP integration test against real devnet + MagicBlock RPC:
+
+```bash
+yarn mcp:test:live
+```
+
+The live test uses the configured RPC URLs and program id, discovers real
+base-layer `Game` accounts, checks decoded account data against raw RPC account
+data, and prepares unsigned join/trade transactions from live blockhashes.
+MCP tools that target a specific game use `game_pubkey`, the `Game` account PDA.
 
 ## Notes
 

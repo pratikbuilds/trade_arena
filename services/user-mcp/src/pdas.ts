@@ -65,26 +65,3 @@ export function findSessionTokenPDA(
     SESSION_KEYS_PROGRAM_ID
   )[0];
 }
-
-// MagicBlock delegation PDAs — all derived from DELEGATION_PROGRAM_ID
-
-export function findBufferPDA(account: PublicKey): PublicKey {
-  return PublicKey.findProgramAddressSync(
-    [Buffer.from("buffer"), account.toBuffer()],
-    DELEGATION_PROGRAM_ID
-  )[0];
-}
-
-export function findDelegationRecordPDA(account: PublicKey): PublicKey {
-  return PublicKey.findProgramAddressSync(
-    [Buffer.from("delegation-record"), account.toBuffer()],
-    DELEGATION_PROGRAM_ID
-  )[0];
-}
-
-export function findDelegationMetadataPDA(account: PublicKey): PublicKey {
-  return PublicKey.findProgramAddressSync(
-    [Buffer.from("delegation-metadata"), account.toBuffer()],
-    DELEGATION_PROGRAM_ID
-  )[0];
-}

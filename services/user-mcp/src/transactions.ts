@@ -238,24 +238,6 @@ function toAnchorTradeAction(action: TradeAction) {
   }
 }
 
-async function fetchGameAssetFeed(
-  game: PublicKey,
-  connection: Connection
-): Promise<PublicKey> {
-  const info = await connection.getAccountInfo(game, "confirmed");
-  if (!info) {
-    throw new Error(`Game account ${game.toBase58()} was not found`);
-  }
-
-  const assetFeedOffset = 8 + 32 + 8;
-  const assetFeedEnd = assetFeedOffset + 32;
-  if (info.data.length < assetFeedEnd) {
-    throw new Error(`Game account ${game.toBase58()} has invalid data`);
-  }
-
-  return new PublicKey(info.data.subarray(assetFeedOffset, assetFeedEnd));
-}
-
 /**
  * Build an unsigned ER transaction for the existing `trade_position`
  * instruction. The caller signs with either the player key directly or a
@@ -277,10 +259,10 @@ export async function buildTradePositionTransaction(args: {
   const sessionToken = signer.equals(player)
     ? null
     : findSessionTokenPDA(programId, signer, player);
+  const priceFeed = args.priceFeed ?? new PublicKey(arena.asset_feed);
 
   const conn = erConnection();
   const tradeArenaProgram = createAnchorProgram(tradeArenaIdl, programId, conn);
-  const priceFeed = args.priceFeed ?? (await fetchGameAssetFeed(gamePda, conn));
 
   const tradeIx = await tradeArenaProgram.methods
     .tradePosition(toAnchorTradeAction(action))

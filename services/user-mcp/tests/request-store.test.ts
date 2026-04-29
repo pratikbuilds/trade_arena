@@ -6,7 +6,7 @@ describe("request-store", () => {
     const meta = createRequest({
       action: "join_arena",
       targetRuntime: "base",
-      arenaId: "btc-1",
+      gamePubkey: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
       messageHash: "abc123",
     });
     expect(meta.request_id).to.match(
@@ -15,14 +15,16 @@ describe("request-store", () => {
     expect(meta.action).to.equal("join_arena");
     expect(meta.target_runtime).to.equal("base");
     expect(meta.message_hash).to.equal("abc123");
-    expect(meta.arena_id).to.equal("btc-1");
+    expect(meta.game_pubkey).to.equal(
+      "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+    );
   });
 
   it("getRequest retrieves a stored request by id", () => {
     const meta = createRequest({
       action: "place_trade",
       targetRuntime: "er",
-      arenaId: "sol-1",
+      gamePubkey: "6sbzC1eH4FTujJXWj51eQe25cYvr4xfXbJ1Dqx1XQNB5",
       messageHash: "def456",
     });
     expect(getRequest(meta.request_id)).to.deep.equal(meta);
@@ -36,13 +38,13 @@ describe("request-store", () => {
     const a = createRequest({
       action: "close_position",
       targetRuntime: "er",
-      arenaId: "btc-1",
+      gamePubkey: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
       messageHash: "hash-a",
     });
     const b = createRequest({
       action: "close_position",
       targetRuntime: "er",
-      arenaId: "btc-1",
+      gamePubkey: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
       messageHash: "hash-b",
     });
     expect(a.request_id).to.not.equal(b.request_id);

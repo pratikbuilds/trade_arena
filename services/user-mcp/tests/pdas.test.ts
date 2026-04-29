@@ -5,10 +5,6 @@ import {
   findPlayerStatePDA,
   findVaultPDA,
   findSessionTokenPDA,
-  findBufferPDA,
-  findDelegationRecordPDA,
-  findDelegationMetadataPDA,
-  DELEGATION_PROGRAM_ID,
   SESSION_KEYS_PROGRAM_ID,
   u64Le,
 } from "../src/pdas";
@@ -101,43 +97,5 @@ describe("findSessionTokenPDA", () => {
       SESSION_KEYS_PROGRAM_ID
     )[0];
     expect(a.toBase58()).to.equal(viaProgram.toBase58());
-  });
-});
-
-describe("MagicBlock delegation PDAs", () => {
-  it("findBufferPDA is deterministic and uses DELEGATION_PROGRAM_ID", () => {
-    const account = findGamePDA(CREATOR, 1, PROGRAM_ID);
-    const a = findBufferPDA(account);
-    const b = findBufferPDA(account);
-    expect(a.toBase58()).to.equal(b.toBase58());
-    const expected = PublicKey.findProgramAddressSync(
-      [Buffer.from("buffer"), account.toBuffer()],
-      DELEGATION_PROGRAM_ID
-    )[0];
-    expect(a.toBase58()).to.equal(expected.toBase58());
-  });
-
-  it("findDelegationRecordPDA is deterministic", () => {
-    const account = findGamePDA(CREATOR, 1, PROGRAM_ID);
-    expect(findDelegationRecordPDA(account).toBase58()).to.equal(
-      findDelegationRecordPDA(account).toBase58()
-    );
-  });
-
-  it("findDelegationMetadataPDA is deterministic", () => {
-    const account = findGamePDA(CREATOR, 1, PROGRAM_ID);
-    expect(findDelegationMetadataPDA(account).toBase58()).to.equal(
-      findDelegationMetadataPDA(account).toBase58()
-    );
-  });
-
-  it("buffer / record / metadata PDAs are all distinct", () => {
-    const account = findGamePDA(CREATOR, 1, PROGRAM_ID);
-    const buf = findBufferPDA(account).toBase58();
-    const rec = findDelegationRecordPDA(account).toBase58();
-    const meta = findDelegationMetadataPDA(account).toBase58();
-    expect(buf).to.not.equal(rec);
-    expect(rec).to.not.equal(meta);
-    expect(buf).to.not.equal(meta);
   });
 });

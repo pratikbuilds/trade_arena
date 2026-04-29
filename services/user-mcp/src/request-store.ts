@@ -8,13 +8,13 @@ export type RequestMetadata = {
   action: RequestAction;
   target_runtime: TargetRuntime;
   message_hash: string;
-  arena_id: string;
+  game_pubkey: string;
 };
 
 export type CreateRequestArgs = {
   action: RequestAction;
   targetRuntime: TargetRuntime;
-  arenaId: string;
+  gamePubkey: string;
   messageHash: string;
 };
 
@@ -27,7 +27,7 @@ export function createRequest(args: CreateRequestArgs): RequestMetadata {
     action: args.action,
     target_runtime: args.targetRuntime,
     message_hash: args.messageHash,
-    arena_id: args.arenaId,
+    game_pubkey: args.gamePubkey,
   };
   store.set(request_id, meta);
   return meta;

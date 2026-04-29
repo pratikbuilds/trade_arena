@@ -1,9 +1,10 @@
 import { expect } from "chai";
 import { createRequest, getRequest } from "../src/request-store";
 import { BN } from "@coral-xyz/anchor";
-import { anchorDiscriminator, messageHash } from "../src/anchor-utils";
+import { messageHash } from "../src/anchor-utils";
 import { Connection, PublicKey } from "@solana/web3.js";
 import type { TransactionInstruction } from "@solana/web3.js";
+import tradeArenaIdl from "../src/idl/trade_arena.json";
 import {
   DELEGATION_PROGRAM_ID,
   SESSION_KEYS_PROGRAM_ID,
@@ -12,6 +13,16 @@ import {
   findSessionTokenPDA,
 } from "../src/pdas";
 
+function instructionDiscriminator(name: string): Buffer {
+  const instruction = tradeArenaIdl.instructions.find(
+    (item) => item.name === name
+  );
+  if (!instruction) {
+    throw new Error(`Missing IDL instruction ${name}`);
+  }
+  return Buffer.from(instruction.discriminator);
+}
+
 // ── request-store: join_arena always routes to base ──────────────────────────
 
 describe("prepare_join_arena — request metadata", () => {
@@ -19,12 +30,14 @@ describe("prepare_join_arena — request metadata", () => {
     const meta = createRequest({
       action: "join_arena",
       targetRuntime: "base",
-      arenaId: "btc-1",
+      gamePubkey: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
       messageHash: "join-hash",
     });
     expect(meta.target_runtime).to.equal("base");
     expect(meta.action).to.equal("join_arena");
-    expect(meta.arena_id).to.equal("btc-1");
+    expect(meta.game_pubkey).to.equal(
+      "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+    );
     expect(meta.message_hash).to.equal("join-hash");
   });
 
@@ -32,34 +45,11 @@ describe("prepare_join_arena — request metadata", () => {
     const meta = createRequest({
       action: "join_arena",
       targetRuntime: "base",
-      arenaId: "btc-1",
+      gamePubkey: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
       messageHash: "join-hash",
     });
     const retrieved = getRequest(meta.request_id);
     expect(retrieved).to.deep.equal(meta);
-  });
-});
-
-// ── anchorDiscriminator ───────────────────────────────────────────────────────
-
-describe("anchorDiscriminator", () => {
-  it("returns an 8-byte buffer", () => {
-    expect(anchorDiscriminator("join_game")).to.have.lengthOf(8);
-  });
-
-  it("is stable across calls", () => {
-    const a = anchorDiscriminator("join_game");
-    const b = anchorDiscriminator("join_game");
-    expect(a).to.deep.equal(b);
-  });
-
-  it("differs for different instruction names", () => {
-    const join = anchorDiscriminator("join_game");
-    const delegate = anchorDiscriminator("delegate_player");
-    const session = anchorDiscriminator("create_session");
-    expect(join).to.not.deep.equal(delegate);
-    expect(delegate).to.not.deep.equal(session);
-    expect(join).to.not.deep.equal(session);
   });
 });
 
@@ -119,7 +109,6 @@ describe("buildJoinArenaTransaction", () => {
   before(() => {
     process.env.TRADE_ARENA_BASE_RPC_URL = "https://api.devnet.solana.com";
     process.env.TRADE_ARENA_ER_RPC_URL = "https://devnet.magicblock.app";
-    process.env.TRADE_ARENA_ARENAS_JSON = "[]";
   });
 
   beforeEach(() => {
@@ -140,7 +129,11 @@ describe("buildJoinArenaTransaction", () => {
     );
     const result = await buildJoinArenaTransaction({
       arena: {
-        arena_id: "btc-1",
+        game_pubkey: findGamePDA(
+          new PublicKey("9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"),
+          1,
+          programId
+        ).toBase58(),
         name: "BTC Arena",
         description: "",
         creator: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
@@ -150,6 +143,19 @@ describe("buildJoinArenaTransaction", () => {
         entry_fee_usdc: "1000000",
         max_players: 8,
         token_mint: "So11111111111111111111111111111111111111112",
+        asset_feed: "71wtTRDY8Gxgw56bXFt2oc6qeAbTxzStdNiC425Z51sr",
+        duration_seconds: 300,
+        start_time: 0,
+        player_count: 0,
+        prize_pool_usdc: "0",
+        leader_value: "0",
+        winner: null,
+        game_pda: findGamePDA(
+          new PublicKey("9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"),
+          1,
+          programId
+        ).toBase58(),
+        delegated: false,
       },
       player: new PublicKey("6sbzC1eH4FTujJXWj51eQe25cYvr4xfXbJ1Dqx1XQNB5"),
       sessionSigner: new PublicKey(
@@ -161,7 +167,9 @@ describe("buildJoinArenaTransaction", () => {
       result.transaction.instructions.map(requireInstruction);
 
     expect(createAtaIx.data).to.deep.equal(Buffer.from([0x01]));
-    expect(joinGameIx.data).to.deep.equal(anchorDiscriminator("join_game"));
+    expect(joinGameIx.data).to.deep.equal(
+      instructionDiscriminator("join_game")
+    );
     expect(sessionIx.programId.toBase58()).to.equal(
       SESSION_KEYS_PROGRAM_ID.toBase58()
     );
@@ -169,7 +177,7 @@ describe("buildJoinArenaTransaction", () => {
       DELEGATION_PROGRAM_ID.toBase58()
     );
     expect(delegateIx.data).to.deep.equal(
-      anchorDiscriminator("delegate_player")
+      instructionDiscriminator("delegate_player")
     );
   });
 });
@@ -180,7 +188,6 @@ describe("buildTradePositionTransaction", () => {
   before(() => {
     process.env.TRADE_ARENA_BASE_RPC_URL = "https://api.devnet.solana.com";
     process.env.TRADE_ARENA_ER_RPC_URL = "https://devnet.magicblock.app";
-    process.env.TRADE_ARENA_ARENAS_JSON = "[]";
   });
 
   beforeEach(() => {
@@ -207,7 +214,7 @@ describe("buildTradePositionTransaction", () => {
   );
 
   const arena = {
-    arena_id: "btc-1",
+    game_pubkey: findGamePDA(creator, 1, programId).toBase58(),
     name: "BTC Arena",
     description: "",
     creator: creator.toBase58(),
@@ -217,6 +224,15 @@ describe("buildTradePositionTransaction", () => {
     entry_fee_usdc: "1000000",
     max_players: 8,
     token_mint: "So11111111111111111111111111111111111111112",
+    asset_feed: priceFeed.toBase58(),
+    duration_seconds: 300,
+    start_time: 0,
+    player_count: 2,
+    prize_pool_usdc: "2000000",
+    leader_value: "0",
+    winner: null,
+    game_pda: findGamePDA(creator, 1, programId).toBase58(),
+    delegated: true,
   };
 
   it("builds an ER increase transaction for a session signer", async () => {
@@ -245,7 +261,7 @@ describe("buildTradePositionTransaction", () => {
     );
     expect(tradeIx.programId.toBase58()).to.equal(programId.toBase58());
     expect(tradeIx.data.subarray(0, 8)).to.deep.equal(
-      anchorDiscriminator("trade_position")
+      instructionDiscriminator("trade_position")
     );
     expect(tradeIx.keys.map((k) => k.pubkey.toBase58())).to.include.members([
       game.toBase58(),
