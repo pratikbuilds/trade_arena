@@ -23,7 +23,10 @@ function isArenaSnapshot(value: unknown): value is ArenaSnapshot {
   );
 }
 
-export function useArenaSnapshot(refreshMs = 7500): SnapshotState {
+export function useArenaSnapshot(
+  gamePubkey?: string,
+  refreshMs = 7500
+): SnapshotState {
   const [snapshot, setSnapshot] = useState<ArenaSnapshot | null>(null);
   const [status, setStatus] = useState<SnapshotStatus>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +37,16 @@ export function useArenaSnapshot(refreshMs = 7500): SnapshotState {
 
     async function loadSnapshot() {
       try {
-        const response = await fetch(`/api/arena/snapshot?ts=${Date.now()}`, {
+        const params = new URLSearchParams({ ts: String(Date.now()) });
+        const queryGamePubkey = new URLSearchParams(
+          window.location.search
+        ).get("game_pubkey");
+        const selectedGamePubkey = gamePubkey ?? queryGamePubkey;
+        if (selectedGamePubkey) {
+          params.set("game_pubkey", selectedGamePubkey);
+        }
+
+        const response = await fetch(`/api/arena/snapshot?${params}`, {
           cache: "no-store",
           signal: controller.signal,
         });
@@ -85,7 +97,7 @@ export function useArenaSnapshot(refreshMs = 7500): SnapshotState {
       controller.abort();
       window.clearInterval(intervalId);
     };
-  }, [refreshMs, reloadToken]);
+  }, [gamePubkey, refreshMs, reloadToken]);
 
   return {
     snapshot,

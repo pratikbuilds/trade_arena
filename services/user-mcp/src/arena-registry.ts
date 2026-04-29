@@ -34,7 +34,7 @@ export type Arena = {
 
 type ArenaJoinability = Pick<Arena, "status" | "player_count" | "max_players">;
 
-type DecodedGame = Omit<
+export type DecodedGame = Omit<
   Arena,
   | "game_pubkey"
   | "name"
@@ -42,7 +42,10 @@ type DecodedGame = Omit<
   | "game_pda"
   | "program_id"
   | "delegated"
->;
+> & {
+  bump: number;
+  vault_bump: number;
+};
 
 function readU64(data: Buffer, offset: number): bigint {
   return data.readBigUInt64LE(offset);
@@ -116,6 +119,10 @@ export function decodeGameAccount(data: Buffer): DecodedGame {
   const winnerTag = data.readUInt8(offset);
   offset += 1;
   const winner = winnerTag === 1 ? readPubkey(data, offset).toBase58() : null;
+  offset += 32;
+  const bump = data.readUInt8(offset);
+  offset += 1;
+  const vaultBump = data.readUInt8(offset);
 
   return {
     creator: creator.toBase58(),
@@ -131,6 +138,8 @@ export function decodeGameAccount(data: Buffer): DecodedGame {
     token_mint: tokenMint.toBase58(),
     leader_value: leaderValue.toString(),
     winner,
+    bump,
+    vault_bump: vaultBump,
   };
 }
 

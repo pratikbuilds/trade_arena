@@ -1,6 +1,12 @@
 import { PublicKey, type AccountInfo } from "@solana/web3.js";
 import { DELEGATION_PROGRAM_ID } from "./pdas";
-import { type Arena, getArenaByPubkey, listArenas } from "./arena-registry";
+import {
+  decodeGameAccount,
+  type Arena,
+  type DecodedGame,
+  getArenaByPubkey,
+  listArenas,
+} from "./arena-registry";
 import { baseConnection, erConnection } from "./transactions";
 import { getUserTrades, type UserTrade } from "./trade-history";
 import { getAgentProfile } from "./agent-profiles";
@@ -58,6 +64,20 @@ export type SnapshotAgent = {
   trades: SnapshotTrade[];
 };
 
+export type SnapshotGameAccount = {
+  pubkey: string;
+  layer: "er" | "base";
+  owner: string;
+  lamports: number;
+  dataLength: number;
+  delegated: boolean;
+  parsed: DecodedGame & {
+    entry_fee_usd: number;
+    prize_pool_usd: number;
+    leader_value_usd: number;
+  };
+};
+
 export type ArenaSnapshot = {
   updatedAt: number;
   game: {
@@ -75,6 +95,7 @@ export type ArenaSnapshot = {
     prizePoolUsd: number;
     winner: string | null;
   };
+  gameAccount: SnapshotGameAccount | null;
   agents: SnapshotAgent[];
 };
 
@@ -327,6 +348,45 @@ async function fetchLivePriceUsd(arena: Arena): Promise<number | null> {
   }
 }
 
+async function fetchGameAccountState(
+  arena: Arena
+): Promise<SnapshotGameAccount | null> {
+  const gamePda = new PublicKey(arena.game_pda);
+
+  async function readLayer(
+    layer: SnapshotGameAccount["layer"]
+  ): Promise<SnapshotGameAccount | null> {
+    const account =
+      layer === "er"
+        ? await erConnection().getAccountInfo(gamePda, "confirmed")
+        : await baseConnection().getAccountInfo(gamePda, "confirmed");
+    if (!account) return null;
+
+    try {
+      const parsed = decodeGameAccount(Buffer.from(account.data));
+      return {
+        pubkey: gamePda.toBase58(),
+        layer,
+        owner: account.owner.toBase58(),
+        lamports: account.lamports,
+        dataLength: account.data.length,
+        delegated: arena.delegated,
+        parsed: {
+          ...parsed,
+          entry_fee_usd: microsToUsd(parsed.entry_fee_usdc),
+          prize_pool_usd: microsToUsd(parsed.prize_pool_usdc),
+          leader_value_usd: microsToUsd(parsed.leader_value),
+        },
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  const [er, base] = await Promise.all([readLayer("er"), readLayer("base")]);
+  return arena.delegated ? er ?? base : base ?? er;
+}
+
 async function selectArena(gamePubkey?: string): Promise<Arena | null> {
   if (gamePubkey) {
     return getArenaByPubkey(gamePubkey);
@@ -356,9 +416,10 @@ async function buildArenaSnapshot(
     ? Math.max(0, Math.floor((updatedAt - startedAtMs) / 1000))
     : 0;
 
-  const [playerStates, markPrice] = await Promise.all([
+  const [playerStates, markPrice, gameAccount] = await Promise.all([
     scanPlayerStates(arena),
     fetchLivePriceUsd(arena),
+    fetchGameAccountState(arena),
   ]);
 
   const agents = await Promise.all(
@@ -432,6 +493,7 @@ async function buildArenaSnapshot(
       prizePoolUsd: microsToUsd(arena.prize_pool_usdc),
       winner: arena.winner,
     },
+    gameAccount,
     agents,
   };
 }

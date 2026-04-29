@@ -416,6 +416,20 @@ const httpServer = http.createServer(
         return;
       }
 
+      if (req.method === "GET" && path === "/arenas") {
+        const statusParam = url.searchParams.get("status") ?? "all";
+        const status =
+          statusParam === "joinable" ||
+          statusParam === "active" ||
+          statusParam === "ended" ||
+          statusParam === "all"
+            ? statusParam
+            : "all";
+        const arenas = await listArenas(status);
+        jsonResponse(res, 200, arenas);
+        return;
+      }
+
       if (req.method === "POST" && path === "/mcp") {
         const server = buildMcpServer();
         const transport = new StreamableHTTPServerTransport({

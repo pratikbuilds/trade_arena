@@ -24,6 +24,7 @@ import { usePythChart } from "@/hooks/use-pyth-chart";
 import type {
   AgentTrade,
   ArenaAgent,
+  ArenaGameAccount,
   ArenaGameSummary,
 } from "@/lib/agent-game";
 import {
@@ -481,6 +482,8 @@ function AgentSidebar({
   allTradeCount,
   agents,
   focusedTrade,
+  gameAccount,
+  snapshotUpdatedAt,
   tradeRows,
   onSelectAgent,
   onSelectTrade,
@@ -489,6 +492,8 @@ function AgentSidebar({
   allTradeCount: number;
   agents: ArenaAgent[];
   focusedTrade: TradeWithAgent | null;
+  gameAccount: ArenaGameAccount | null;
+  snapshotUpdatedAt: number | undefined;
   tradeRows: TradeWithAgent[];
   onSelectAgent: (id: ActiveAgentId) => void;
   onSelectTrade: (agent: ArenaAgent, trade: AgentTrade) => void;
@@ -619,7 +624,53 @@ function AgentSidebar({
           })}
         </div>
       </div>
+
+      <GameAccountDebugBox
+        gameAccount={gameAccount}
+        snapshotUpdatedAt={snapshotUpdatedAt}
+      />
     </aside>
+  );
+}
+
+function GameAccountDebugBox({
+  gameAccount,
+  snapshotUpdatedAt,
+}: {
+  gameAccount: ArenaGameAccount | null;
+  snapshotUpdatedAt: number | undefined;
+}) {
+  const debugPayload = gameAccount
+    ? {
+        account: {
+          pubkey: gameAccount.pubkey,
+          layer: gameAccount.layer,
+          owner: gameAccount.owner,
+          lamports: gameAccount.lamports,
+          dataLength: gameAccount.dataLength,
+          delegated: gameAccount.delegated,
+          snapshotUpdatedAt,
+        },
+        parsed: gameAccount.parsed,
+      }
+    : null;
+
+  return (
+    <div className="border-t border-border/70 p-1.5">
+      <div className="rounded-[4px] border border-border/70 bg-background/70">
+        <div className="flex items-center justify-between gap-3 border-b border-border/70 px-2.5 py-2">
+          <span className="text-xs font-semibold">Game account state</span>
+          <span className="font-mono text-[10px] uppercase text-muted-foreground">
+            {gameAccount ? gameAccount.layer : "empty"}
+          </span>
+        </div>
+        <pre className="max-h-56 overflow-auto p-2.5 font-mono text-[10px] leading-relaxed text-muted-foreground">
+          {debugPayload
+            ? JSON.stringify(debugPayload, null, 2)
+            : "Waiting for a parsed Game account in the MCP snapshot."}
+        </pre>
+      </div>
+    </div>
   );
 }
 
@@ -689,7 +740,7 @@ function ChartLoadingState() {
   );
 }
 
-export function MarketChart() {
+export function MarketChart({ gamePubkey }: { gamePubkey?: string }) {
   const [hoverPoint, setHoverPoint] = useState<HoverPoint | null>(null);
   const [displayMode, setDisplayMode] = useState<"line" | "candle">("candle");
   const [activeAgentId, setActiveAgentId] = useState<ActiveAgentId>(ALL_AGENTS);
@@ -701,7 +752,7 @@ export function MarketChart() {
     status: snapshotStatus,
     error: snapshotError,
     retry: retrySnapshot,
-  } = useArenaSnapshot();
+  } = useArenaSnapshot(gamePubkey);
   const {
     candles,
     error,
@@ -1020,6 +1071,8 @@ export function MarketChart() {
               allTradeCount={allTradeRows.length}
               agents={agents}
               focusedTrade={focusedTrade}
+              gameAccount={snapshot?.gameAccount ?? null}
+              snapshotUpdatedAt={snapshot?.updatedAt}
               tradeRows={selectedTradeRows}
               onSelectAgent={(id) => {
                 setActiveAgentId(id);

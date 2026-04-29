@@ -5,6 +5,7 @@ export type AgentParticipationStatus =
   | "joined"
   | "in_position"
   | "settled";
+export type ArenaGameStatus = "joinable" | "active" | "ended";
 
 type AgentTradeBase = {
   id: string;
@@ -60,7 +61,7 @@ export type ArenaGameSummary = {
   gamePda: string;
   createGameTx: string;
   startedAtLabel: string;
-  status?: "idle" | "creating" | "joinable" | "active" | "ending" | "ended";
+  status?: "idle" | "creating" | ArenaGameStatus | "ending";
   elapsedSeconds?: number;
   durationSeconds?: number;
   startedAtMs?: number | null;
@@ -71,9 +72,61 @@ export type ArenaGameSummary = {
   winner?: string | null;
 };
 
+export type ArenaGameAccount = {
+  pubkey: string;
+  layer: "er" | "base";
+  owner: string;
+  lamports: number;
+  dataLength: number;
+  delegated: boolean;
+  parsed: {
+    creator: string;
+    game_id: number;
+    asset_feed: string;
+    entry_fee_usdc: string;
+    entry_fee_usd: number;
+    duration_seconds: number;
+    start_time: number;
+    status: ArenaGameStatus;
+    player_count: number;
+    max_players: number;
+    prize_pool_usdc: string;
+    prize_pool_usd: number;
+    token_mint: string;
+    leader_value: string;
+    leader_value_usd: number;
+    winner: string | null;
+    bump: number;
+    vault_bump: number;
+  };
+};
+
+export type ArenaGame = {
+  game_pubkey: string;
+  name: string;
+  description: string;
+  creator: string;
+  game_id: number;
+  game_pda: string;
+  program_id: string;
+  status: ArenaGameStatus;
+  entry_fee_usdc: string;
+  duration_seconds: number;
+  start_time: number;
+  player_count: number;
+  max_players: number;
+  prize_pool_usdc: string;
+  asset_feed: string;
+  token_mint: string;
+  leader_value: string;
+  winner: string | null;
+  delegated: boolean;
+};
+
 export type ArenaSnapshot = {
   updatedAt: number;
   game: ArenaGameSummary;
+  gameAccount: ArenaGameAccount | null;
   agents: ArenaAgent[];
 };
 
