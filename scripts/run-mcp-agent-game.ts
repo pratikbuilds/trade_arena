@@ -1,5 +1,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { BN, Program } from "@coral-xyz/anchor";
+import fs from "node:fs";
+import path from "node:path";
 import {
   createAssociatedTokenAccount,
   createMint,
@@ -9,6 +11,7 @@ import {
 import { TradeArena } from "../target/types/trade_arena";
 
 const MCP_URL = process.env.TRADE_ARENA_MCP_URL ?? "http://127.0.0.1:3000";
+const UI_URL = process.env.TRADE_ARENA_UI_URL ?? "http://127.0.0.1:5173";
 const ER_ENDPOINT =
   process.env.TRADE_ARENA_ER_RPC_URL ?? "https://devnet.magicblock.app";
 const BASE_ENDPOINT =
@@ -27,6 +30,10 @@ const ENTRY_FEE_MICROS = Number(process.env.MCP_AGENT_ENTRY_FEE ?? "1000000");
 const DURATION_SECONDS = Number(process.env.MCP_AGENT_DURATION ?? "900");
 const CYCLES = Number(process.env.MCP_AGENT_CYCLES ?? "2");
 const HOLD_MS = Number(process.env.MCP_AGENT_HOLD_MS ?? "3500");
+const SNAPSHOT_MAX_AGE_MS = Number(
+  process.env.MCP_AGENT_SNAPSHOT_MAX_AGE_MS ?? "30000"
+);
+const ARTIFACT_DIR = process.env.MCP_AGENT_ARTIFACT_DIR ?? "artifacts";
 
 type Side = "long" | "short";
 
@@ -79,6 +86,48 @@ type AgentRuntime = AgentConfig & {
   player: anchor.web3.Keypair;
   session: anchor.web3.Keypair;
   playerState: anchor.web3.PublicKey;
+};
+
+type ArenaSnapshot = {
+  updatedAt: number;
+  game?: {
+    gamePda?: string;
+  };
+  agents?: Array<{
+    trades?: unknown[];
+  }>;
+};
+
+type ArenaDiscoveryRow = {
+  game_pubkey: string;
+  game_pda: string;
+  status: string;
+};
+
+type RehearsalArtifact = {
+  recorded_at: string;
+  game_pda: string;
+  game_id: number;
+  mcp_url: string;
+  ui_url: string;
+  mcp_snapshot_url: string;
+  ui_snapshot_url: string;
+  output_path: string;
+  create_game_sig: string;
+  delegate_game_sig: string;
+  start_game_sig: string;
+  agents: Array<{
+    id: string;
+    player: string;
+    session: string;
+    player_state: string;
+  }>;
+  snapshot: {
+    updated_at: number;
+    age_ms: number;
+    agent_count: number;
+    trade_count: number;
+  };
 };
 
 function u64Le(value: number): Buffer {
@@ -173,6 +222,15 @@ async function mcpCall<T>(
   return payload as T;
 }
 
+async function fetchJson<T>(url: string): Promise<T> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`${url} failed with HTTP ${response.status}`);
+  }
+
+  return (await response.json()) as T;
+}
+
 async function sendPreparedTransaction(args: {
   base64: string;
   connection: anchor.web3.Connection;
@@ -259,6 +317,60 @@ async function fetchLivePriceUsd(
   return rawPrice / 10 ** expoMagnitude;
 }
 
+async function assertMcpDiscoversGame(gamePda: anchor.web3.PublicKey) {
+  const arenas = await mcpCall<ArenaDiscoveryRow[]>("list_arenas", {
+    status: "all",
+  });
+  const discovered = arenas.find(
+    (arena) =>
+      arena.game_pubkey === gamePda.toBase58() ||
+      arena.game_pda === gamePda.toBase58()
+  );
+
+  if (!discovered) {
+    throw new Error(`MCP list_arenas did not discover ${gamePda.toBase58()}`);
+  }
+
+  console.log(`  ✓ MCP discovered game (${discovered.status})`);
+  return discovered;
+}
+
+function assertFreshSnapshot(args: {
+  snapshot: ArenaSnapshot;
+  gamePda: anchor.web3.PublicKey;
+  source: string;
+}): { ageMs: number; agentCount: number; tradeCount: number } {
+  if (
+    typeof args.snapshot.updatedAt !== "number" ||
+    args.snapshot.game?.gamePda !== args.gamePda.toBase58() ||
+    !Array.isArray(args.snapshot.agents)
+  ) {
+    throw new Error(`${args.source} returned an invalid snapshot`);
+  }
+
+  const ageMs = Date.now() - args.snapshot.updatedAt;
+  if (ageMs > SNAPSHOT_MAX_AGE_MS) {
+    throw new Error(
+      `${args.source} snapshot is stale: ${ageMs}ms old, max ${SNAPSHOT_MAX_AGE_MS}ms`
+    );
+  }
+
+  const tradeCount = args.snapshot.agents.reduce(
+    (sum, agent) => sum + (agent.trades?.length ?? 0),
+    0
+  );
+  return {
+    ageMs,
+    agentCount: args.snapshot.agents.length,
+    tradeCount,
+  };
+}
+
+function writeArtifact(artifact: RehearsalArtifact): void {
+  fs.mkdirSync(path.dirname(artifact.output_path), { recursive: true });
+  fs.writeFileSync(artifact.output_path, JSON.stringify(artifact, null, 2));
+}
+
 async function main(): Promise<void> {
   process.env.ANCHOR_PROVIDER_URL = BASE_ENDPOINT;
   process.env.ANCHOR_WALLET =
@@ -293,6 +405,7 @@ async function main(): Promise<void> {
 
   console.log("MCP agent arena");
   console.log(`  MCP: ${MCP_URL}`);
+  console.log(`  UI: ${UI_URL}`);
   console.log(`  base: ${BASE_ENDPOINT}`);
   console.log(`  er: ${ER_ENDPOINT}`);
   console.log(`  game: ${gamePda.toBase58()}`);
@@ -350,7 +463,7 @@ async function main(): Promise<void> {
       new BN(DURATION_SECONDS),
       agents.length
     )
-    .accounts({
+    .accountsPartial({
       creator: creator.publicKey,
       game: gamePda,
       usdcMint,
@@ -362,6 +475,7 @@ async function main(): Promise<void> {
     })
     .rpc();
   console.log(`  ✓ create game: ${createGameSig}`);
+  await assertMcpDiscoversGame(gamePda);
 
   for (const [index, agent] of agents.entries()) {
     await mcpCall("record_agent_profile", {
@@ -395,10 +509,11 @@ async function main(): Promise<void> {
       label: `MCP join ${agent.id}`,
     });
   }
+  await assertMcpDiscoversGame(gamePda);
 
   const delegateGameSig = await program.methods
     .delegateGame(new BN(gameId))
-    .accounts({
+    .accountsPartial({
       creator: creator.publicKey,
       game: gamePda,
       ownerProgram: program.programId,
@@ -491,24 +606,59 @@ async function main(): Promise<void> {
     await sleep(800);
   }
 
-  const snapshot = await fetch(`${MCP_URL}/snapshot?game_pubkey=${gamePda}`);
-  if (!snapshot.ok) {
-    throw new Error(`Snapshot check failed with ${snapshot.status}`);
-  }
-  const snapshotBody = await snapshot.json();
+  const mcpSnapshotUrl = `${MCP_URL}/snapshot?game_pubkey=${gamePda}`;
+  const uiSnapshotUrl = `${UI_URL}/api/arena/snapshot?game_pubkey=${gamePda}`;
+  const mcpSnapshot = await fetchJson<ArenaSnapshot>(mcpSnapshotUrl);
+  const mcpFreshness = assertFreshSnapshot({
+    snapshot: mcpSnapshot,
+    gamePda,
+    source: "MCP",
+  });
+  const uiSnapshot = await fetchJson<ArenaSnapshot>(uiSnapshotUrl);
+  assertFreshSnapshot({
+    snapshot: uiSnapshot,
+    gamePda,
+    source: "UI proxy",
+  });
+  const outputPath = path.join(
+    ARTIFACT_DIR,
+    `mcp-agent-game-${gamePda.toBase58()}.json`
+  );
+  writeArtifact({
+    recorded_at: new Date().toISOString(),
+    game_pda: gamePda.toBase58(),
+    game_id: gameId,
+    mcp_url: MCP_URL,
+    ui_url: UI_URL,
+    mcp_snapshot_url: mcpSnapshotUrl,
+    ui_snapshot_url: uiSnapshotUrl,
+    output_path: outputPath,
+    create_game_sig: createGameSig,
+    delegate_game_sig: delegateGameSig,
+    start_game_sig: startSig,
+    agents: agents.map((agent) => ({
+      id: agent.id,
+      player: agent.player.publicKey.toBase58(),
+      session: agent.session.publicKey.toBase58(),
+      player_state: agent.playerState.toBase58(),
+    })),
+    snapshot: {
+      updated_at: mcpSnapshot.updatedAt,
+      age_ms: mcpFreshness.ageMs,
+      agent_count: mcpFreshness.agentCount,
+      trade_count: mcpFreshness.tradeCount,
+    },
+  });
 
   console.log("");
   console.log("Live MCP/UI success data");
   console.log(`  game: ${gamePda.toBase58()}`);
   console.log(`  start tx: ${txUrl("er", startSig)}`);
-  console.log(`  agents in snapshot: ${snapshotBody.agents.length}`);
-  console.log(
-    `  trades in snapshot: ${snapshotBody.agents.reduce(
-      (sum: number, agent: { trades: unknown[] }) => sum + agent.trades.length,
-      0
-    )}`
-  );
-  console.log(`  UI snapshot URL: ${MCP_URL}/snapshot?game_pubkey=${gamePda}`);
+  console.log(`  agents in snapshot: ${mcpFreshness.agentCount}`);
+  console.log(`  trades in snapshot: ${mcpFreshness.tradeCount}`);
+  console.log(`  MCP snapshot URL: ${mcpSnapshotUrl}`);
+  console.log(`  UI snapshot URL: ${uiSnapshotUrl}`);
+  console.log(`  artifact: ${outputPath}`);
 }
 
 main().catch((error) => {

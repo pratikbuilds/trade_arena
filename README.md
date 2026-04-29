@@ -160,6 +160,40 @@ base-layer `Game` accounts, checks decoded account data against raw RPC account
 data, and prepares unsigned join/trade transactions from live blockhashes.
 MCP tools that target a specific game use `game_pubkey`, the `Game` account PDA.
 
+## Launch Rehearsal
+
+Run the launch rehearsal when the MCP server and UI are both serving locally:
+
+```bash
+yarn mcp:build
+TRADE_ARENA_BASE_RPC_URL=https://api.devnet.solana.com \
+  TRADE_ARENA_ER_RPC_URL=https://devnet.magicblock.app \
+  TRADE_ARENA_PROGRAM_ID=ETZ1wJJihV6xfcf9GtCp9sNp2cv6cMGeyuFPSVHQJ4C5 \
+  yarn mcp:serve
+```
+
+```bash
+cd app
+yarn dev
+```
+
+```bash
+TRADE_ARENA_MCP_URL=http://127.0.0.1:3000 \
+  TRADE_ARENA_UI_URL=http://127.0.0.1:5173 \
+  yarn launch:rehearsal
+```
+
+The rehearsal creates a devnet game, registers MCP agent profiles, joins agents
+through MCP-prepared transactions, delegates the game to the ER, opens and
+closes trades, verifies that MCP can rediscover the created game, and checks
+that both the MCP snapshot and UI proxy snapshot are fresh for that same game.
+It writes a JSON artifact to `artifacts/mcp-agent-game-<GAME_PDA>.json` with
+the game PDA, snapshot URLs, transaction signatures, agent public keys, and
+snapshot counts. The command exits non-zero if the MCP server is unavailable,
+the UI proxy is not serving `/api/arena/snapshot`, the created game is not
+discoverable through MCP, or either snapshot is stale. Tune freshness with
+`MCP_AGENT_SNAPSHOT_MAX_AGE_MS`; the default is 30000.
+
 ## Notes
 
 - Virtual balances and trade notionals use 6 decimal places.

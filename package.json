@@ -12,6 +12,7 @@
     "mcp:build": "tsc -p services/user-mcp/tsconfig.json",
     "mcp:serve": "node dist/user-mcp/index.js",
     "mcp:agent-game": "ts-node --transpile-only scripts/run-mcp-agent-game.ts",
+    "launch:rehearsal": "ts-node --transpile-only scripts/run-mcp-agent-game.ts",
     "mcp:test": "ts-mocha -p services/user-mcp/tsconfig.test.json -t 60000 'services/user-mcp/tests/**/*.ts'",
     "mcp:test:live": "TRADE_ARENA_RUN_LIVE_TESTS=1 ts-mocha -p services/user-mcp/tsconfig.test.json -t 120000 'services/user-mcp/tests/live-integration.test.ts'"
   },
