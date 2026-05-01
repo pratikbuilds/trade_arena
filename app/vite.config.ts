@@ -9,6 +9,7 @@ const arenaMcpUrl =
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
+    allowedHosts: true,
     proxy: {
       "/api/pyth": {
         target: "https://pyth.dourolabs.app/v1/fixed_rate@200ms",
@@ -23,6 +24,7 @@ export default defineConfig({
     },
   },
   preview: {
+    allowedHosts: true,
     proxy: {
       "/api/pyth": {
         target: "https://pyth.dourolabs.app/v1/fixed_rate@200ms",
