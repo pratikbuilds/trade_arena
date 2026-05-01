@@ -3,6 +3,9 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
+const arenaMcpUrl =
+  process.env.TRADE_ARENA_MCP_URL ?? "http://127.0.0.1:3000";
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
@@ -13,7 +16,7 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/api\/pyth/, ""),
       },
       "/api/arena": {
-        target: "http://127.0.0.1:3000",
+        target: arenaMcpUrl,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/arena/, ""),
       },
@@ -27,7 +30,7 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/api\/pyth/, ""),
       },
       "/api/arena": {
-        target: "http://127.0.0.1:3000",
+        target: arenaMcpUrl,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/arena/, ""),
       },
