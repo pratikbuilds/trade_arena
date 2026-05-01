@@ -6,8 +6,7 @@ COPY package.json yarn.lock tsconfig.json ./
 COPY services ./services
 COPY app ./app
 
-RUN npm install -g yarn@1.22.22 \
-  && yarn install --frozen-lockfile \
+RUN yarn install --frozen-lockfile \
   && yarn mcp:build \
   && cd app \
   && yarn install --frozen-lockfile \
