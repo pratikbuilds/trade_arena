@@ -3,8 +3,5 @@
   "build": {
     "builder": "RAILPACK",
     "buildCommand": "if [ \"$RAILWAY_SERVICE_NAME\" = \"frontend\" ]; then cd app && yarn install --frozen-lockfile && yarn build; else yarn install --frozen-lockfile && yarn mcp:build; fi"
-  },
-  "deploy": {
-    "startCommand": "if [ \"$RAILWAY_SERVICE_NAME\" = \"frontend\" ]; then cd app && yarn preview --host 0.0.0.0 --port $PORT; else yarn mcp:serve; fi"
   }
 }

@@ -12,4 +12,4 @@ RUN yarn install --frozen-lockfile \
   && yarn install --frozen-lockfile \
   && yarn build
 
-CMD if [ "$RAILWAY_SERVICE_NAME" = "frontend" ]; then cd app && yarn preview --host 0.0.0.0 --port "$PORT"; else yarn mcp:serve; fi
+CMD ["sh", "-c", "if [ \"$RAILWAY_SERVICE_NAME\" = \"frontend\" ]; then cd app && yarn preview --host 0.0.0.0 --port \"$PORT\"; else yarn mcp:serve; fi"]
