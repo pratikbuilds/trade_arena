@@ -519,7 +519,7 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
   const joinedPlayers = new Set<string>();
   const priceHistory: number[] = [];
 
-  let usdcMint: anchor.web3.PublicKey;
+  let tokenMint: anchor.web3.PublicKey;
   let gamePDA: anchor.web3.PublicKey;
   let vaultPDA: anchor.web3.PublicKey;
   let psAlpha: anchor.web3.PublicKey;
@@ -727,31 +727,31 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
     recordInstruction("fund_players", "devnet", fundSig, "0.1 SOL each");
     console.log("  ✓ funded players (0.1 SOL each)");
 
-    usdcMint = await createMint(
+    tokenMint = await createMint(
       provider.connection,
       creatorKeypair,
       creatorKeypair.publicKey,
       null,
       6
     );
-    console.log("  ✓ USDC mint:", usdcMint.toBase58());
+    console.log("  ✓ token mint:", tokenMint.toBase58());
 
     alphaATA = await createAssociatedTokenAccount(
       provider.connection,
       alpha,
-      usdcMint,
+      tokenMint,
       alpha.publicKey
     );
     betaATA = await createAssociatedTokenAccount(
       provider.connection,
       beta,
-      usdcMint,
+      tokenMint,
       beta.publicKey
     );
     gammaATA = await createAssociatedTokenAccount(
       provider.connection,
       gamma,
-      usdcMint,
+      tokenMint,
       gamma.publicKey
     );
 
@@ -763,7 +763,7 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
       const mintSig = await mintTo(
         provider.connection,
         creatorKeypair,
-        usdcMint,
+        tokenMint,
         ata,
         creatorKeypair,
         100_000_000
@@ -797,7 +797,7 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
       .accounts({
         creator: creatorWallet.publicKey,
         game: gamePDA,
-        usdcMint,
+        tokenMint,
         vault: vaultPDA,
         assetFeed: PYTH_LAZER_BTC_USD,
         tokenProgram: TOKEN_PROGRAM_ID,
@@ -824,7 +824,7 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
           player: player.publicKey,
           game: gamePDA,
           playerState: ps,
-          playerUsdc: ata,
+          playerToken: ata,
           vault: vaultPDA,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: anchor.web3.SystemProgram.programId,
@@ -1372,7 +1372,7 @@ describe("Trade Arena — Real Multi-Trade Simulation", function () {
         winner: winnerKey,
         game: gamePDA,
         vault: vaultPDA,
-        winnerUsdc: winnerATA,
+        winnerToken: winnerATA,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .signers([winnerKP])

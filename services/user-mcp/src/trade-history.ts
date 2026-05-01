@@ -1,12 +1,14 @@
 import { PublicKey } from "@solana/web3.js";
-import tradeArenaIdl from "./idl/trade_arena.json";
+import type { Idl } from "@coral-xyz/anchor";
+import { tradeArenaIdl } from "./idl/trade_arena_idl";
 import { getArenaByPubkey } from "./arena-registry";
 import { findPlayerStatePDA } from "./pdas";
 import { erConnection } from "./transactions";
 
 const TRADE_POSITION_DISCRIMINATOR = Buffer.from(
-  tradeArenaIdl.instructions.find((item) => item.name === "trade_position")
-    ?.discriminator ?? []
+  (tradeArenaIdl as Idl).instructions.find(
+    (item) => item.name === "trade_position"
+  )?.discriminator ?? []
 );
 
 export type DecodedTradeAction =

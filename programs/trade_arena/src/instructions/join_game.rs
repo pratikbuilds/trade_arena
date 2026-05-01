@@ -28,15 +28,17 @@ pub struct JoinGame<'info> {
 
     #[account(
         mut,
-        token::mint = game.usdc_mint,
+        token::mint = game.token_mint,
         token::authority = player,
     )]
-    pub player_usdc: Account<'info, TokenAccount>,
+    pub player_token: Account<'info, TokenAccount>,
 
     #[account(
         mut,
         seeds = [VAULT_SEED, game.key().as_ref()],
         bump = game.vault_bump,
+        token::mint = game.token_mint,
+        token::authority = game,
     )]
     pub vault: Account<'info, TokenAccount>,
 
@@ -45,12 +47,12 @@ pub struct JoinGame<'info> {
 }
 
 pub fn handler(ctx: Context<JoinGame>) -> Result<()> {
-    // Transfer real USDC entry fee into the prize vault
+    // Transfer the real token entry fee into the prize vault.
     token::transfer(
         CpiContext::new(
             ctx.accounts.token_program.to_account_info(),
             Transfer {
-                from: ctx.accounts.player_usdc.to_account_info(),
+                from: ctx.accounts.player_token.to_account_info(),
                 to: ctx.accounts.vault.to_account_info(),
                 authority: ctx.accounts.player.to_account_info(),
             },

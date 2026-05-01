@@ -25,6 +25,10 @@ type CreateConfig = {
   tokenMint: anchor.web3.PublicKey | null;
 };
 
+type GameAccount = Awaited<
+  ReturnType<Program<TradeArena>["account"]["game"]["fetch"]>
+>;
+
 function printHelp(): void {
   console.log(`Trade Arena admin game script
 
@@ -137,68 +141,11 @@ function statusName(status: unknown): string {
   return Object.keys(status as Record<string, unknown>)[0] ?? "unknown";
 }
 
-function statusFromVariant(value: number): string {
-  switch (value) {
-    case 0:
-      return "waitingForPlayers";
-    case 1:
-      return "active";
-    case 2:
-      return "ended";
-    default:
-      return `unknown:${value}`;
-  }
-}
-
-function readPubkey(data: Buffer, offset: number): anchor.web3.PublicKey {
-  return new anchor.web3.PublicKey(data.subarray(offset, offset + 32));
-}
-
-function decodeGameData(data: Buffer) {
-  let offset = 8;
-  const creator = readPubkey(data, offset);
-  offset += 32;
-  const gameId = data.readBigUInt64LE(offset);
-  offset += 8;
-  const assetFeed = readPubkey(data, offset);
-  offset += 32;
-  const entryFee = data.readBigUInt64LE(offset);
-  offset += 8;
-  const duration = data.readBigInt64LE(offset);
-  offset += 8;
-  const startTime = data.readBigInt64LE(offset);
-  offset += 8;
-  const status = statusFromVariant(data.readUInt8(offset));
-  offset += 1;
-  const playerCount = data.readUInt32LE(offset);
-  offset += 4;
-  const maxPlayers = data.readUInt32LE(offset);
-  offset += 4;
-  const prizePool = data.readBigUInt64LE(offset);
-  offset += 8;
-  const tokenMint = readPubkey(data, offset);
-  offset += 32;
-  const leaderValue = data.readBigUInt64LE(offset);
-  offset += 8;
-  const winnerTag = data.readUInt8(offset);
-  offset += 1;
-  const winner = winnerTag === 1 ? readPubkey(data, offset).toBase58() : null;
-
-  return {
-    creator,
-    gameId,
-    assetFeed,
-    entryFee,
-    duration,
-    startTime,
-    status,
-    playerCount,
-    maxPlayers,
-    prizePool,
-    tokenMint,
-    leaderValue,
-    winner,
-  };
+function decodeGameAccount(
+  program: Program<TradeArena>,
+  data: Buffer
+): GameAccount {
+  return program.coder.accounts.decode<GameAccount>("game", data);
 }
 
 function bnString(value: unknown): string {
@@ -253,7 +200,7 @@ async function createGame(args: {
     .accountsPartial({
       creator: admin,
       game: gamePda,
-      usdcMint: tokenMint,
+      tokenMint,
       vault: vaultPda,
       assetFeed: config.assetFeed,
       tokenProgram: TOKEN_PROGRAM_ID,
@@ -299,7 +246,7 @@ async function printStatus(program: Program<TradeArena>): Promise<void> {
     throw new Error(`Game account not found: ${gamePda.toBase58()}`);
   }
 
-  const account = decodeGameData(Buffer.from(accountInfo.data));
+  const account = decodeGameAccount(program, Buffer.from(accountInfo.data));
   const vaultPda = findVaultPDA(gamePda, program.programId);
   const delegated = accountInfo.owner.equals(DELEGATION_PROGRAM_ID);
 
@@ -312,18 +259,18 @@ async function printStatus(program: Program<TradeArena>): Promise<void> {
         owner: accountInfo.owner.toBase58(),
         delegated,
         creator: account.creator.toBase58(),
-        game_id: account.gameId.toString(),
+        game_id: bnString(account.gameId),
         asset_feed: account.assetFeed.toBase58(),
-        entry_fee_micro_usdc: account.entryFee.toString(),
-        duration_seconds: account.duration.toString(),
-        start_time: account.startTime.toString(),
-        status: account.status,
+        entry_fee_micro_usdc: bnString(account.entryFee),
+        duration_seconds: bnString(account.duration),
+        start_time: bnString(account.startTime),
+        status: statusName(account.status),
         player_count: account.playerCount,
         max_players: account.maxPlayers,
-        prize_pool_micro_usdc: account.prizePool.toString(),
+        prize_pool_micro_usdc: bnString(account.prizePool),
         token_mint: account.tokenMint.toBase58(),
-        leader_value: account.leaderValue.toString(),
-        winner: account.winner,
+        leader_value: bnString(account.leaderValue),
+        winner: nullablePubkey(account.winner),
       },
       null,
       2
@@ -360,20 +307,19 @@ async function delegateGame(args: {
     );
   }
 
-  const account = decodeGameData(Buffer.from(accountInfo.data));
+  const account = decodeGameAccount(program, Buffer.from(accountInfo.data));
   if (!account.creator.equals(provider.wallet.publicKey)) {
     throw new Error(
       `Current admin ${provider.wallet.publicKey.toBase58()} is not game creator ${account.creator.toBase58()}`
     );
   }
-  if (account.status !== "waitingForPlayers") {
-    throw new Error(
-      `Game status must be waitingForPlayers, got ${account.status}`
-    );
+  const status = statusName(account.status);
+  if (status !== "waitingForPlayers") {
+    throw new Error(`Game status must be waitingForPlayers, got ${status}`);
   }
 
   const tx = await program.methods
-    .delegateGame(new BN(account.gameId.toString()))
+    .delegateGame(new BN(bnString(account.gameId)))
     .accountsPartial({
       creator: provider.wallet.publicKey,
       game: gamePda,
@@ -390,7 +336,7 @@ async function delegateGame(args: {
         action: "delegate_game",
         tx,
         game_pda: gamePda.toBase58(),
-        game_id: account.gameId.toString(),
+        game_id: bnString(account.gameId),
         owner: after?.owner.toBase58() ?? null,
         delegated: after?.owner.equals(DELEGATION_PROGRAM_ID) ?? false,
       },

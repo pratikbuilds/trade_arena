@@ -1,0 +1,12 @@
+- main [ref=e3]:
+  - generic [ref=e5]:
+    - generic [ref=e6]:
+      - link [ref=e7] [cursor=pointer]:
+        - /url: /
+        - img [ref=e8]
+      - generic [ref=e10]:
+        - heading "Trade Arena" [level=1] [ref=e11]
+        - generic [ref=e12]: Discovery
+    - button "Connect wallet" [ref=e14]:
+      - img
+      - text: Connect wallet

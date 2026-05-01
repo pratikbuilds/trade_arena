@@ -1,94 +1,56 @@
-import { useEffect, useState } from "react";
-import type { ArenaGame } from "@/lib/agent-game";
+import { useCallback } from "react";
 
-type GamesStatus = "loading" | "ready" | "empty" | "error";
+import type { ArenaGame } from "@/lib/agent-game";
+import { parseArenaGames } from "@/lib/arena";
+import {
+  type ResourceStatus,
+  usePollingResource,
+} from "@/hooks/use-polling-resource";
+
+const EMPTY_GAMES: ArenaGame[] = [];
 
 type GamesState = {
   games: ArenaGame[];
-  status: GamesStatus;
+  status: ResourceStatus;
   error: string | null;
   retry: () => void;
 };
 
-function isArenaGame(value: unknown): value is ArenaGame {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const game = value as Partial<ArenaGame>;
-  return (
-    typeof game.game_pubkey === "string" &&
-    typeof game.game_id === "number" &&
-    (game.status === "joinable" ||
-      game.status === "active" ||
-      game.status === "ended")
-  );
-}
-
 export function useArenaGames(refreshMs = 10000): GamesState {
-  const [games, setGames] = useState<ArenaGame[]>([]);
-  const [status, setStatus] = useState<GamesStatus>("loading");
-  const [error, setError] = useState<string | null>(null);
-  const [reloadToken, setReloadToken] = useState(0);
+  const load = useCallback(async (signal: AbortSignal) => {
+    const params = new URLSearchParams({
+      status: "all",
+      ts: String(Date.now()),
+    });
+    const response = await fetch(`/api/arena/arenas?${params}`, {
+      cache: "no-store",
+      signal,
+    });
 
-  useEffect(() => {
-    const controller = new AbortController();
-
-    async function loadGames() {
-      try {
-        const params = new URLSearchParams({
-          status: "all",
-          ts: String(Date.now()),
-        });
-        const response = await fetch(`/api/arena/arenas?${params}`, {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          throw new Error(`Arena list request failed with ${response.status}.`);
-        }
-
-        const payload = (await response.json()) as unknown;
-        if (!Array.isArray(payload) || !payload.every(isArenaGame)) {
-          throw new Error("Arena list returned an invalid payload.");
-        }
-
-        setGames(payload);
-        setStatus(payload.length > 0 ? "ready" : "empty");
-        setError(null);
-      } catch (loadError) {
-        if (controller.signal.aborted) {
-          return;
-        }
-
-        setError(
-          loadError instanceof Error
-            ? loadError.message
-            : "Failed to load arena games."
-        );
-        setStatus("error");
-      }
+    if (!response.ok) {
+      throw new Error(`Arena list request failed with ${response.status}.`);
     }
 
-    void loadGames();
-    const intervalId = window.setInterval(() => {
-      void loadGames();
-    }, refreshMs);
+    return parseArenaGames((await response.json()) as unknown);
+  }, []);
 
-    return () => {
-      controller.abort();
-      window.clearInterval(intervalId);
-    };
-  }, [refreshMs, reloadToken]);
+  const {
+    data: games,
+    status,
+    error,
+    retry,
+  } = usePollingResource({
+    load,
+    initialData: EMPTY_GAMES,
+    emptyData: EMPTY_GAMES,
+    refreshMs,
+    fallbackError: "Failed to load arena games.",
+  });
 
   return {
     games,
     status,
     error,
-    retry: () => {
-      setStatus("loading");
-      setReloadToken((token) => token + 1);
-    },
+    retry,
   };
 }

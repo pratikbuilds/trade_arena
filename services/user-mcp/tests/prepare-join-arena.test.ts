@@ -4,7 +4,8 @@ import { BN } from "@coral-xyz/anchor";
 import { messageHash } from "../src/anchor-utils";
 import { Connection, PublicKey } from "@solana/web3.js";
 import type { TransactionInstruction } from "@solana/web3.js";
-import tradeArenaIdl from "../src/idl/trade_arena.json";
+import type { Idl } from "@coral-xyz/anchor";
+import { tradeArenaIdl } from "../src/idl/trade_arena_idl";
 import {
   DELEGATION_PROGRAM_ID,
   SESSION_KEYS_PROGRAM_ID,
@@ -14,7 +15,7 @@ import {
 } from "../src/pdas";
 
 function instructionDiscriminator(name: string): Buffer {
-  const instruction = tradeArenaIdl.instructions.find(
+  const instruction = (tradeArenaIdl as Idl).instructions.find(
     (item) => item.name === name
   );
   if (!instruction) {

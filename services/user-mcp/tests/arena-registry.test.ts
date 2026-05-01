@@ -152,7 +152,7 @@ describe("decodeGameAccount", () => {
 describe("listArenas", () => {
   const originalGetProgramAccounts = Connection.prototype.getProgramAccounts;
   const programId = new PublicKey(
-    "ETZ1wJJihV6xfcf9GtCp9sNp2cv6cMGeyuFPSVHQJ4C5"
+    "HxqxwrurkZDcyVQVTaiz7DSaKXdPgypMzGiRj7kPjBdB"
   );
   const creator = new PublicKey("9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM");
 

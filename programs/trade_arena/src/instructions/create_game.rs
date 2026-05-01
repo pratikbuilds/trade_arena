@@ -19,14 +19,14 @@ pub struct CreateGame<'info> {
     )]
     pub game: Account<'info, Game>,
 
-    /// The SPL mint players will use for their entry fee (expected: USDC)
-    pub usdc_mint: Account<'info, Mint>,
+    /// The SPL mint players will use for their entry fee.
+    pub token_mint: Account<'info, Mint>,
 
     /// Prize vault — owned by the game PDA, released to the winner
     #[account(
         init,
         payer = creator,
-        token::mint = usdc_mint,
+        token::mint = token_mint,
         token::authority = game,
         seeds = [VAULT_SEED, game.key().as_ref()],
         bump,
@@ -72,7 +72,7 @@ pub fn handler(
     g.player_count = 0;
     g.max_players = max_players;
     g.prize_pool = 0;
-    g.usdc_mint = ctx.accounts.usdc_mint.key();
+    g.token_mint = ctx.accounts.token_mint.key();
     g.leader_value = 0;
     g.winner = None;
     g.bump = ctx.bumps.game;

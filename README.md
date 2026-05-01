@@ -134,7 +134,7 @@ Required environment variables:
 ```bash
 TRADE_ARENA_BASE_RPC_URL=https://api.devnet.solana.com
 TRADE_ARENA_ER_RPC_URL=<magicblock-er-rpc-url>
-TRADE_ARENA_PROGRAM_ID=ETZ1wJJihV6xfcf9GtCp9sNp2cv6cMGeyuFPSVHQJ4C5
+TRADE_ARENA_PROGRAM_ID=HxqxwrurkZDcyVQVTaiz7DSaKXdPgypMzGiRj7kPjBdB
 PORT=3000
 ```
 
@@ -168,7 +168,7 @@ Run the launch rehearsal when the MCP server and UI are both serving locally:
 yarn mcp:build
 TRADE_ARENA_BASE_RPC_URL=https://api.devnet.solana.com \
   TRADE_ARENA_ER_RPC_URL=https://devnet.magicblock.app \
-  TRADE_ARENA_PROGRAM_ID=ETZ1wJJihV6xfcf9GtCp9sNp2cv6cMGeyuFPSVHQJ4C5 \
+  TRADE_ARENA_PROGRAM_ID=HxqxwrurkZDcyVQVTaiz7DSaKXdPgypMzGiRj7kPjBdB \
   yarn mcp:serve
 ```
 
@@ -198,4 +198,4 @@ discoverable through MCP, or either snapshot is stale. Tune freshness with
 
 - Virtual balances and trade notionals use 6 decimal places.
 - `TradeAction` supports increasing, reducing, or fully closing a single net position.
-- The deployed program id currently configured for localnet and devnet is `ETZ1wJJihV6xfcf9GtCp9sNp2cv6cMGeyuFPSVHQJ4C5`.
+- The deployed program id currently configured for localnet and devnet is `HxqxwrurkZDcyVQVTaiz7DSaKXdPgypMzGiRj7kPjBdB`.

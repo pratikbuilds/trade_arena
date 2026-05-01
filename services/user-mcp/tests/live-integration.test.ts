@@ -6,7 +6,7 @@ import { expect } from "chai";
 
 const DEFAULT_BASE_RPC_URL = "https://api.devnet.solana.com";
 const DEFAULT_ER_RPC_URL = "https://devnet.magicblock.app";
-const DEFAULT_PROGRAM_ID = "ETZ1wJJihV6xfcf9GtCp9sNp2cv6cMGeyuFPSVHQJ4C5";
+const DEFAULT_PROGRAM_ID = "HxqxwrurkZDcyVQVTaiz7DSaKXdPgypMzGiRj7kPjBdB";
 const PLAYER_STATE_DISCRIMINATOR = Buffer.from([
   56, 3, 60, 86, 174, 16, 244, 195,
 ]);
@@ -116,7 +116,7 @@ describe("MCP live integration", function () {
       expect(decoded.status).to.equal(arena.status);
 
       const fetched = await getArenaByPubkey(arena.game_pubkey);
-      console.log("fetched",fetched)
+      console.log("fetched", fetched);
       expect(fetched?.game_pda).to.equal(arena.game_pda);
       expect(fetched?.game_id).to.equal(arena.game_id);
     }
@@ -217,7 +217,7 @@ describe("MCP live integration", function () {
         player: identity.player,
         limit: 5,
       });
-      console.log("result",JSON.stringify(result));
+      console.log("result", JSON.stringify(result));
       expect(result?.player_state).to.equal(pubkey.toBase58());
       expect(result?.trades.length, "decoded trades").to.be.greaterThan(0);
       const [trade] = result!.trades;

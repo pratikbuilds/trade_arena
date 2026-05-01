@@ -9,6 +9,17 @@ export type ChartWindow = {
   intervalLabel: string;
 };
 
+export type MarketView = {
+  committed: CandlePoint[];
+  liveCandle: CandlePoint | null;
+  lineData: LivelinePoint[];
+  latestPrice: number;
+  openingPrice: number;
+  priceDelta: string;
+  priceDeltaPositive: boolean;
+  chartAnchorTime: number;
+};
+
 type PythHistoryResponse = {
   s: "ok" | "error";
   errmsg?: string;
@@ -52,7 +63,7 @@ async function fetchHistoryRange(
   from: number,
   to: number,
   resolution: ChartWindow["resolution"],
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<CandlePoint[]> {
   const params = new URLSearchParams({
     symbol,
@@ -61,7 +72,9 @@ async function fetchHistoryRange(
     resolution,
   });
 
-  const response = await fetch(`/api/pyth/history?${params.toString()}`, { signal });
+  const response = await fetch(`/api/pyth/history?${params.toString()}`, {
+    signal,
+  });
 
   if (!response.ok) {
     throw new Error(`Pyth history request failed with ${response.status}.`);
@@ -77,7 +90,9 @@ async function fetchHistoryRange(
     !payload.l ||
     !payload.c
   ) {
-    throw new Error(payload.errmsg ?? "Pyth returned an invalid candle payload.");
+    throw new Error(
+      payload.errmsg ?? "Pyth returned an invalid candle payload."
+    );
   }
 
   return payload.t.map((time, index) => ({
@@ -93,14 +108,14 @@ export async function fetchPythCandles(
   symbol: string,
   chartWindow: ChartWindow,
   signal?: AbortSignal,
+  now = Math.floor(Date.now() / 1000)
 ): Promise<CandlePoint[]> {
-  const now = Math.floor(Date.now() / 1000);
   return fetchHistoryRange(
     symbol,
     now - chartWindow.historySpan,
     now,
     chartWindow.resolution,
-    signal,
+    signal
   );
 }
 
@@ -108,18 +123,21 @@ export async function fetchRecentPythCandles(
   symbol: string,
   chartWindow: ChartWindow,
   signal?: AbortSignal,
+  now = Math.floor(Date.now() / 1000)
 ): Promise<CandlePoint[]> {
-  const now = Math.floor(Date.now() / 1000);
   return fetchHistoryRange(
     symbol,
     now - chartWindow.candleWidth * 3,
     now,
     chartWindow.resolution,
-    signal,
+    signal
   );
 }
 
-export function splitLiveCandle(candles: CandlePoint[], candleWidth: number): {
+export function splitLiveCandle(
+  candles: CandlePoint[],
+  candleWidth: number
+): {
   committed: CandlePoint[];
   liveCandle: CandlePoint | null;
 } {
@@ -141,7 +159,36 @@ export function splitLiveCandle(candles: CandlePoint[], candleWidth: number): {
   };
 }
 
-export function candlesToLineData(candles: CandlePoint[], liveCandle: CandlePoint | null): LivelinePoint[] {
+export function mergeCandles(
+  currentCandles: CandlePoint[],
+  nextCandles: CandlePoint[]
+): CandlePoint[] {
+  if (currentCandles.length === 0) {
+    return nextCandles;
+  }
+
+  const merged = [...currentCandles];
+
+  for (const nextCandle of nextCandles) {
+    const existingIndex = merged.findIndex(
+      (candle) => candle.time === nextCandle.time
+    );
+
+    if (existingIndex >= 0) {
+      merged[existingIndex] = nextCandle;
+      continue;
+    }
+
+    merged.push(nextCandle);
+  }
+
+  return merged.sort((left, right) => left.time - right.time);
+}
+
+export function candlesToLineData(
+  candles: CandlePoint[],
+  liveCandle: CandlePoint | null
+): LivelinePoint[] {
   const points = candles.map((candle) => ({
     time: candle.time,
     value: candle.close,
@@ -155,6 +202,31 @@ export function candlesToLineData(candles: CandlePoint[], liveCandle: CandlePoin
   }
 
   return points;
+}
+
+export function createMarketView(
+  candles: CandlePoint[],
+  selectedWindow: ChartWindow,
+  fallbackNow: number
+): MarketView {
+  const { committed, liveCandle } = splitLiveCandle(
+    candles,
+    selectedWindow.candleWidth
+  );
+  const lineData = candlesToLineData(committed, liveCandle);
+  const latestPrice = liveCandle?.close ?? committed.at(-1)?.close ?? 0;
+  const openingPrice = committed.at(0)?.open ?? liveCandle?.open ?? latestPrice;
+
+  return {
+    committed,
+    liveCandle,
+    lineData,
+    latestPrice,
+    openingPrice,
+    priceDelta: formatPriceDelta(latestPrice, openingPrice),
+    priceDeltaPositive: latestPrice >= openingPrice,
+    chartAnchorTime: liveCandle?.time ?? committed.at(-1)?.time ?? fallbackNow,
+  };
 }
 
 export function formatUsd(value: number): string {

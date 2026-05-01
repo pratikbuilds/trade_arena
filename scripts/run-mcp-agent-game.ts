@@ -433,7 +433,7 @@ async function main(): Promise<void> {
   const fundSig = await provider.sendAndConfirm(fundTx);
   console.log(`  ✓ funded agent wallets: ${fundSig}`);
 
-  const usdcMint = await createMint(
+  const tokenMint = await createMint(
     baseConnection,
     creator,
     creator.publicKey,
@@ -445,14 +445,14 @@ async function main(): Promise<void> {
     const ata = await createAssociatedTokenAccount(
       baseConnection,
       creator,
-      usdcMint,
+      tokenMint,
       agent.player.publicKey
     );
-    await mintTo(baseConnection, creator, usdcMint, ata, creator, 100_000_000);
+    await mintTo(baseConnection, creator, tokenMint, ata, creator, 100_000_000);
     console.log(
       `  ✓ ${
         agent.id
-      } ${agent.player.publicKey.toBase58()} funded with test USDC`
+      } ${agent.player.publicKey.toBase58()} funded with test tokens`
     );
   }
 
@@ -466,7 +466,7 @@ async function main(): Promise<void> {
     .accountsPartial({
       creator: creator.publicKey,
       game: gamePda,
-      usdcMint,
+      tokenMint,
       vault: vaultPda,
       assetFeed: PRICE_FEED,
       tokenProgram: TOKEN_PROGRAM_ID,

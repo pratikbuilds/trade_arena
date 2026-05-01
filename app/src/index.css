@@ -259,6 +259,15 @@
   transform: scale(0.99);
 }
 
+.brand-wordmark {
+  font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "ss01" 1, "cv01" 1;
+  font-variation-settings: "wght" 850;
+  font-weight: 850;
+  letter-spacing: -0.035em;
+  line-height: 0.95;
+}
+
 .chart-control {
   transition:
     background-color 150ms var(--ease-out),

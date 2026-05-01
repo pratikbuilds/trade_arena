@@ -346,7 +346,8 @@ async function createSessionToken(args: {
   validUntil: number;
   lamports?: number;
 }): Promise<anchor.web3.PublicKey> {
-  const { provider, authority, sessionSigner, targetProgram, validUntil } = args;
+  const { provider, authority, sessionSigner, targetProgram, validUntil } =
+    args;
   const lamports = args.lamports ?? 5_000_000;
   const sessionToken = findSessionTokenPDA(
     targetProgram,
@@ -513,7 +514,7 @@ describe("Trade Arena — full devnet game loop", () => {
   const VIRTUAL_START = new BN("10000000000");
 
   // Mutable shared state populated by `before` and early tests
-  let usdcMint: anchor.web3.PublicKey;
+  let tokenMint: anchor.web3.PublicKey;
   let gamePDA: anchor.web3.PublicKey;
   let vaultPDA: anchor.web3.PublicKey;
   let ps1PDA: anchor.web3.PublicKey; // PlayerState for player1
@@ -550,26 +551,26 @@ describe("Trade Arena — full devnet game loop", () => {
     console.log("  [setup] funded players from creator wallet");
 
     // Create a fresh SPL token that acts as USDC for this test
-    usdcMint = await createMint(
+    tokenMint = await createMint(
       provider.connection,
       creatorKeypair, // payer
       creatorKeypair.publicKey, // mint authority
       null, // no freeze authority
       6 // 6 decimals  — same as real USDC
     );
-    console.log("  [setup] USDC mint:", usdcMint.toBase58());
+    console.log("  [setup] token mint:", tokenMint.toBase58());
 
     // Create ATA for each player
     p1UsdcATA = await createAssociatedTokenAccount(
       provider.connection,
       player1,
-      usdcMint,
+      tokenMint,
       player1.publicKey
     );
     p2UsdcATA = await createAssociatedTokenAccount(
       provider.connection,
       player1,
-      usdcMint,
+      tokenMint,
       player2.publicKey
     );
 
@@ -577,7 +578,7 @@ describe("Trade Arena — full devnet game loop", () => {
     await mintTo(
       provider.connection,
       creatorKeypair,
-      usdcMint,
+      tokenMint,
       p1UsdcATA,
       creatorKeypair,
       100_000_000
@@ -585,7 +586,7 @@ describe("Trade Arena — full devnet game loop", () => {
     await mintTo(
       provider.connection,
       creatorKeypair,
-      usdcMint,
+      tokenMint,
       p2UsdcATA,
       creatorKeypair,
       100_000_000
@@ -629,7 +630,7 @@ describe("Trade Arena — full devnet game loop", () => {
       .accounts({
         creator: creatorWallet.publicKey,
         game: gamePDA,
-        usdcMint: usdcMint,
+        tokenMint,
         vault: vaultPDA,
         assetFeed: PYTH_LAZER_BTC_USD,
         tokenProgram: TOKEN_PROGRAM_ID,
@@ -674,7 +675,7 @@ describe("Trade Arena — full devnet game loop", () => {
           player: player.publicKey,
           game: gamePDA,
           playerState: psAcc,
-          playerUsdc: ata,
+          playerToken: ata,
           vault: vaultPDA,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: anchor.web3.SystemProgram.programId,
@@ -1126,7 +1127,7 @@ describe("Trade Arena — full devnet game loop", () => {
         winner: winnerKey,
         game: gamePDA,
         vault: vaultPDA,
-        winnerUsdc: winnerATA,
+        winnerToken: winnerATA,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .signers([winnerKP])

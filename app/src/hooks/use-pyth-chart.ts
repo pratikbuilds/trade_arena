@@ -6,6 +6,7 @@ import {
   type ChartWindow,
   fetchPythCandles,
   fetchRecentPythCandles,
+  mergeCandles,
 } from "@/lib/market";
 
 type ChartStatus = "loading" | "ready" | "empty" | "error";
@@ -15,8 +16,13 @@ type UsePythChartOptions = {
   refreshMs?: number;
 };
 
-export function usePythChart({ symbol, refreshMs = 2000 }: UsePythChartOptions) {
-  const [selectedWindow, setSelectedWindow] = useState<ChartWindow>(CHART_WINDOWS[0]);
+export function usePythChart({
+  symbol,
+  refreshMs = 2000,
+}: UsePythChartOptions) {
+  const [selectedWindow, setSelectedWindow] = useState<ChartWindow>(
+    CHART_WINDOWS[0]
+  );
   const [candles, setCandles] = useState<CandlePoint[]>([]);
   const [status, setStatus] = useState<ChartStatus>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +34,11 @@ export function usePythChart({ symbol, refreshMs = 2000 }: UsePythChartOptions) 
 
     async function loadCandles() {
       try {
-        const nextCandles = await fetchPythCandles(symbol, selectedWindow, controller.signal);
+        const nextCandles = await fetchPythCandles(
+          symbol,
+          selectedWindow,
+          controller.signal
+        );
         setCandles(nextCandles);
         setError(null);
         setStatus(nextCandles.length === 0 ? "empty" : "ready");
@@ -39,7 +49,9 @@ export function usePythChart({ symbol, refreshMs = 2000 }: UsePythChartOptions) 
         }
 
         const message =
-          loadError instanceof Error ? loadError.message : "Failed to load Pyth market data.";
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to load Pyth market data.";
 
         setError(message);
         setStatus("error");
@@ -67,32 +79,19 @@ export function usePythChart({ symbol, refreshMs = 2000 }: UsePythChartOptions) 
 
     async function refreshLiveEdge() {
       try {
-        const recentCandles = await fetchRecentPythCandles(symbol, selectedWindow, controller.signal);
+        const recentCandles = await fetchRecentPythCandles(
+          symbol,
+          selectedWindow,
+          controller.signal
+        );
 
         if (recentCandles.length === 0) {
           return;
         }
 
-        setCandles((currentCandles) => {
-          if (currentCandles.length === 0) {
-            return recentCandles;
-          }
-
-          const merged = [...currentCandles];
-
-          for (const nextCandle of recentCandles) {
-            const existingIndex = merged.findIndex((candle) => candle.time === nextCandle.time);
-
-            if (existingIndex >= 0) {
-              merged[existingIndex] = nextCandle;
-              continue;
-            }
-
-            merged.push(nextCandle);
-          }
-
-          return merged.sort((left, right) => left.time - right.time);
-        });
+        setCandles((currentCandles) =>
+          mergeCandles(currentCandles, recentCandles)
+        );
 
         setLastUpdatedAt(Date.now());
       } catch (loadError) {
@@ -101,7 +100,9 @@ export function usePythChart({ symbol, refreshMs = 2000 }: UsePythChartOptions) 
         }
 
         const message =
-          loadError instanceof Error ? loadError.message : "Failed to refresh the live candle.";
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to refresh the live candle.";
 
         setError(message);
       }

@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Liveline } from "liveline";
-import type { CandlePoint, HoverPoint } from "liveline";
+import type { HoverPoint } from "liveline";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -25,16 +25,27 @@ import type {
   AgentTrade,
   ArenaAgent,
   ArenaGameAccount,
-  ArenaGameSummary,
 } from "@/lib/agent-game";
 import {
+  buildReplayProjection,
+  focusedTradeDots,
+  formatGameClock,
+  formatSignedUsd,
+  isClosedTrade,
+  markerPosition,
+  participationLabel,
+  tradeExitPoint,
+  tradeOpenTime,
+  tradeStatusLabel,
+  type ReplayMarker,
+  type TradeWithAgent,
+} from "@/lib/chart-replay";
+import {
   CHART_WINDOWS,
-  candlesToLineData,
+  createMarketView,
   formatAxisUsd,
   formatChartTimestamp,
-  formatPriceDelta,
   formatUsd,
-  splitLiveCandle,
 } from "@/lib/market";
 
 const MARKET_SYMBOL = "Crypto.BTC/USD";
@@ -50,270 +61,6 @@ const CHART_PLOT_INSET = {
 };
 
 type ActiveAgentId = typeof ALL_AGENTS | ArenaAgent["id"];
-
-type ReplayMarker = {
-  id: string;
-  agent: ArenaAgent;
-  trade: AgentTrade;
-  phase: "entry" | "exit";
-  time: number;
-  price: number;
-};
-
-type TradeWithAgent = {
-  agent: ArenaAgent;
-  trade: AgentTrade;
-};
-
-type ClosedTrade = AgentTrade & {
-  exitPrice: number;
-  pnlUsd: number;
-  closeTx: string;
-  closeOffsetSeconds: number;
-};
-
-type FocusedTradeDot = {
-  id: string;
-  position: ReturnType<typeof markerPosition>;
-  phase: "entry" | "exit";
-};
-
-function formatSignedUsd(value: number): string {
-  const absValue = Math.abs(value);
-  const absolute =
-    absValue > 0 && absValue < 0.01
-      ? new Intl.NumberFormat("en-US", {
-          style: "currency",
-          currency: "USD",
-          minimumFractionDigits: 4,
-          maximumFractionDigits: 4,
-        }).format(absValue)
-      : formatUsd(absValue);
-  return value >= 0 ? `+${absolute}` : `-${absolute}`;
-}
-
-function isClosedTrade(trade: AgentTrade): trade is ClosedTrade {
-  return (
-    (trade.status === "closed" || trade.status === undefined) &&
-    typeof trade.exitPrice === "number" &&
-    typeof trade.pnlUsd === "number" &&
-    typeof trade.closeTx === "string" &&
-    typeof trade.closeOffsetSeconds === "number"
-  );
-}
-
-function tradeStatusLabel(trade: AgentTrade): string {
-  if (isClosedTrade(trade)) {
-    return formatSignedUsd(trade.pnlUsd);
-  }
-
-  return trade.status === "pending_close" ? "Closing" : "Open";
-}
-
-function participationLabel(agent: ArenaAgent): string {
-  if (agent.hasOpenPosition || agent.participationStatus === "in_position") {
-    return "In trade";
-  }
-
-  if (
-    agent.participationStatus === "joined" ||
-    agent.participationStatus === "settled" ||
-    agent.trades.length > 0
-  ) {
-    return "Joined";
-  }
-
-  return "Waiting";
-}
-
-function formatRemainingDuration(seconds: number): string {
-  const safeSeconds = Math.max(0, Math.floor(seconds));
-  const hours = Math.floor(safeSeconds / 3600);
-  const minutes = Math.floor((safeSeconds % 3600) / 60);
-  const remainingSeconds = safeSeconds % 60;
-  const paddedSeconds = remainingSeconds.toString().padStart(2, "0");
-
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, "0")}:${paddedSeconds}`;
-  }
-
-  return `${minutes}:${paddedSeconds}`;
-}
-
-function formatGameClock(
-  game: ArenaGameSummary | null,
-  snapshotUpdatedAt: number | undefined,
-  nowMs: number
-): string {
-  if (!game) {
-    return "MCP";
-  }
-
-  if (game.status === "ended") {
-    return "Ended";
-  }
-
-  if (typeof game.endsAtMs === "number") {
-    return formatRemainingDuration((game.endsAtMs - nowMs) / 1000);
-  }
-
-  if (
-    typeof game.elapsedSeconds !== "number" ||
-    typeof game.durationSeconds !== "number"
-  ) {
-    return "Pending";
-  }
-
-  const staleSeconds =
-    typeof snapshotUpdatedAt === "number"
-      ? Math.max(0, Math.floor((nowMs - snapshotUpdatedAt) / 1000))
-      : 0;
-  const elapsedSeconds =
-    game.status === "active"
-      ? game.elapsedSeconds + staleSeconds
-      : game.elapsedSeconds;
-
-  return formatRemainingDuration(game.durationSeconds - elapsedSeconds);
-}
-
-function visibleCandles(candles: CandlePoint[], start: number, end: number) {
-  return candles.filter((candle) => candle.time >= start && candle.time <= end);
-}
-
-function candleRangeForOverlay(candles: CandlePoint[], fallbackPrice: number) {
-  if (candles.length === 0) {
-    return {
-      min: fallbackPrice - 1,
-      max: fallbackPrice + 1,
-    };
-  }
-
-  const low = Math.min(...candles.map((candle) => candle.low));
-  const high = Math.max(...candles.map((candle) => candle.high));
-  const range = high - low;
-  const margin = range * 0.12;
-
-  if (range <= 0) {
-    return {
-      min: low - 0.2,
-      max: high + 0.2,
-    };
-  }
-
-  return {
-    min: low - margin,
-    max: high + margin,
-  };
-}
-
-function tradeOpenTime(trade: AgentTrade, chartAnchorTime: number): number {
-  const replayAnchor = chartAnchorTime - 90;
-  return typeof trade.openTime === "number"
-    ? Math.floor(trade.openTime / 1000)
-    : replayAnchor + trade.openOffsetSeconds;
-}
-
-function tradeCloseTime(
-  trade: AgentTrade,
-  chartAnchorTime: number
-): number | null {
-  if (!isClosedTrade(trade)) {
-    return null;
-  }
-
-  const replayAnchor = chartAnchorTime - 90;
-  return typeof trade.closeTime === "number"
-    ? Math.floor(trade.closeTime / 1000)
-    : replayAnchor + trade.closeOffsetSeconds;
-}
-
-function buildReplayMarkers(
-  agents: ArenaAgent[],
-  chartAnchorTime: number
-): ReplayMarker[] {
-  return agents.flatMap((agent) =>
-    agent.trades.flatMap((trade) => {
-      const markers: ReplayMarker[] = [
-        {
-          id: `${trade.id}-entry`,
-          agent,
-          trade,
-          phase: "entry" as const,
-          time: tradeOpenTime(trade, chartAnchorTime),
-          price: trade.entryPrice,
-        },
-      ];
-
-      if (isClosedTrade(trade)) {
-        markers.push({
-          id: `${trade.id}-exit`,
-          agent,
-          trade,
-          phase: "exit" as const,
-          time: tradeCloseTime(trade, chartAnchorTime) ?? chartAnchorTime,
-          price: trade.exitPrice,
-        });
-      }
-
-      return markers;
-    })
-  );
-}
-
-function markerPosition(args: {
-  time: number;
-  price: number;
-  startTime: number;
-  endTime: number;
-  minPrice: number;
-  maxPrice: number;
-}) {
-  const { time, price, startTime, endTime, minPrice, maxPrice } = args;
-  const x = ((time - startTime) / Math.max(endTime - startTime, 1)) * 100;
-  const y = ((maxPrice - price) / Math.max(maxPrice - minPrice, 1)) * 100;
-
-  return {
-    left: `${Math.min(97, Math.max(3, x))}%`,
-    top: `${Math.min(90, Math.max(10, y))}%`,
-  };
-}
-
-function tradeExitPoint(
-  trade: AgentTrade,
-  chartAnchorTime: number
-): { time: number; price: number } | null {
-  if (!isClosedTrade(trade)) {
-    return null;
-  }
-
-  return {
-    time: tradeCloseTime(trade, chartAnchorTime) ?? chartAnchorTime,
-    price: trade.exitPrice,
-  };
-}
-
-function focusedTradeDots(
-  focusedTrade: TradeWithAgent,
-  entryPosition: ReturnType<typeof markerPosition>,
-  exitPosition: ReturnType<typeof markerPosition> | null
-): FocusedTradeDot[] {
-  return [
-    {
-      id: `${focusedTrade.trade.id}-entry`,
-      position: entryPosition,
-      phase: "entry",
-    },
-    ...(exitPosition
-      ? [
-          {
-            id: `${focusedTrade.trade.id}-exit`,
-            position: exitPosition,
-            phase: "exit" as const,
-          },
-        ]
-      : []),
-  ];
-}
 
 function TradeExecutionOverlay({
   markers,
@@ -773,65 +520,20 @@ export function MarketChart({ gamePubkey }: { gamePubkey?: string }) {
     return () => window.clearInterval(intervalId);
   }, []);
 
-  const { committed, liveCandle } = splitLiveCandle(
+  const marketView = createMarketView(candles, selectedWindow, fallbackNow);
+  const hoverValue = hoverPoint?.value ?? marketView.latestPrice;
+  const replay = buildReplayProjection({
+    agents: snapshot?.agents ?? [],
+    game: snapshot?.game ?? null,
+    activeAgentId,
+    allAgentsId: ALL_AGENTS,
+    activeTradeId,
+    marketView,
+    selectedWindow,
     candles,
-    selectedWindow.candleWidth
-  );
-  const lineData = candlesToLineData(committed, liveCandle);
-  const latestPrice = liveCandle?.close ?? committed.at(-1)?.close ?? 0;
-  const openingPrice = committed.at(0)?.open ?? liveCandle?.open ?? latestPrice;
-  const priceDelta = formatPriceDelta(latestPrice, openingPrice);
-  const priceDeltaPositive = latestPrice >= openingPrice;
-  const hoverValue = hoverPoint?.value ?? latestPrice;
-  const chartAnchorTime =
-    liveCandle?.time ?? committed.at(-1)?.time ?? fallbackNow;
-  const agents = snapshot?.agents ?? [];
-  const game = snapshot?.game ?? null;
-  const selectedAgents =
-    activeAgentId === ALL_AGENTS
-      ? agents
-      : agents.filter((agent) => agent.id === activeAgentId);
-  const selectedTradeRows = selectedAgents.flatMap((agent) =>
-    agent.trades.map((trade) => ({ agent, trade }))
-  );
-  const allTradeRows = agents.flatMap((agent) =>
-    agent.trades.map((trade) => ({ agent, trade }))
-  );
-  const focusedTrade =
-    selectedTradeRows.find(({ trade }) => trade.id === activeTradeId) ??
-    allTradeRows.find(({ trade }) => trade.id === activeTradeId) ??
-    selectedTradeRows[0] ??
-    null;
-  const replayMarkers = buildReplayMarkers(selectedAgents, chartAnchorTime);
-  const replayStart = chartAnchorTime - selectedWindow.secs;
-  const replayEnd = chartAnchorTime;
-  const candlesInView = visibleCandles(candles, replayStart, replayEnd);
-  const visibleReplayMarkers = replayMarkers.filter(
-    (marker) => marker.time >= replayStart && marker.time <= replayEnd
-  );
-  const markerPrices = visibleReplayMarkers.map((marker) => ({
-    time: marker.time,
-    open: marker.price,
-    high: marker.price,
-    low: marker.price,
-    close: marker.price,
-  }));
-  const replayPriceRange = candleRangeForOverlay(
-    [...candlesInView, ...markerPrices],
-    latestPrice
-  );
-  const minReplayPrice = replayPriceRange.min;
-  const maxReplayPrice = replayPriceRange.max;
+  });
+  const { game } = replay;
   const gameClockLabel = formatGameClock(game, snapshot?.updatedAt, clockNowMs);
-  const livelineReference =
-    focusedTrade && activeAgentId !== ALL_AGENTS
-      ? {
-          value: focusedTrade.trade.entryPrice,
-          label: `${focusedTrade.trade.side.toUpperCase()} ${formatUsd(
-            focusedTrade.trade.notionalUsd
-          )}`,
-        }
-      : undefined;
 
   if (pythStatus === "loading" && candles.length === 0) {
     return <ChartLoadingState />;
@@ -893,10 +595,10 @@ export function MarketChart({ gamePubkey }: { gamePubkey?: string }) {
               </CardTitle>
               <span
                 className={`text-sm font-medium ${
-                  priceDeltaPositive ? "text-[#9ad48c]" : "text-[#d98585]"
+                  marketView.priceDeltaPositive ? "text-[#9ad48c]" : "text-[#d98585]"
                 }`}
               >
-                {priceDelta}
+                {marketView.priceDelta}
               </span>
               <span className="text-xs text-muted-foreground">
                 {MARKET_LABEL}
@@ -977,42 +679,42 @@ export function MarketChart({ gamePubkey }: { gamePubkey?: string }) {
                       badge={false}
                       badgeVariant="minimal"
                       candleWidth={selectedWindow.candleWidth}
-                      candles={committed}
+                      candles={marketView.committed}
                       color={CHART_COLOR}
-                      data={lineData}
+                      data={marketView.lineData}
                       emptyText="Waiting for Pyth candles"
                       fill={false}
                       formatTime={formatChartTimestamp}
                       formatValue={formatAxisUsd}
                       grid
-                      lineData={lineData}
+                      lineData={marketView.lineData}
                       lineMode={displayMode === "line"}
-                      lineValue={latestPrice}
-                      liveCandle={liveCandle ?? undefined}
+                      lineValue={marketView.latestPrice}
+                      liveCandle={marketView.liveCandle ?? undefined}
                       mode="candle"
                       momentum
                       onHover={setHoverPoint}
                       padding={{ top: 44, right: 82, bottom: 72, left: 22 }}
                       pulse
-                      referenceLine={livelineReference}
+                      referenceLine={replay.livelineReference}
                       scrub
                       showValue={false}
                       style={{ height: "100%" }}
                       theme="dark"
                       tooltipY={18}
-                      value={latestPrice}
+                      value={marketView.latestPrice}
                       window={selectedWindow.secs}
                     />
                   </div>
                 </div>
                 <TradeExecutionOverlay
-                  chartAnchorTime={chartAnchorTime}
-                  endTime={replayEnd}
-                  focusedTrade={focusedTrade}
-                  markers={visibleReplayMarkers}
-                  maxPrice={maxReplayPrice}
-                  minPrice={minReplayPrice}
-                  startTime={replayStart}
+                  chartAnchorTime={marketView.chartAnchorTime}
+                  endTime={replay.replayEnd}
+                  focusedTrade={replay.focusedTrade}
+                  markers={replay.visibleReplayMarkers}
+                  maxPrice={replay.maxReplayPrice}
+                  minPrice={replay.minReplayPrice}
+                  startTime={replay.replayStart}
                 />
               </div>
 
@@ -1066,21 +768,21 @@ export function MarketChart({ gamePubkey }: { gamePubkey?: string }) {
               ) : null}
             </div>
 
-            <AgentSidebar
-              activeAgentId={activeAgentId}
-              allTradeCount={allTradeRows.length}
-              agents={agents}
-              focusedTrade={focusedTrade}
-              gameAccount={snapshot?.gameAccount ?? null}
-              snapshotUpdatedAt={snapshot?.updatedAt}
-              tradeRows={selectedTradeRows}
-              onSelectAgent={(id) => {
-                setActiveAgentId(id);
-                const nextAgent =
-                  id === ALL_AGENTS
-                    ? agents[0]
-                    : agents.find((agent) => agent.id === id);
-                setActiveTradeId(nextAgent?.trades[0]?.id ?? DEFAULT_TRADE_ID);
+              <AgentSidebar
+                activeAgentId={activeAgentId}
+                allTradeCount={replay.allTradeRows.length}
+                agents={replay.agents}
+                focusedTrade={replay.focusedTrade}
+                gameAccount={snapshot?.gameAccount ?? null}
+                snapshotUpdatedAt={snapshot?.updatedAt}
+                tradeRows={replay.selectedTradeRows}
+                onSelectAgent={(id) => {
+                  setActiveAgentId(id);
+                  const nextAgent =
+                    id === ALL_AGENTS
+                      ? replay.agents[0]
+                      : replay.agents.find((agent) => agent.id === id);
+                  setActiveTradeId(nextAgent?.trades[0]?.id ?? DEFAULT_TRADE_ID);
               }}
               onSelectTrade={(agent, trade) => {
                 setActiveAgentId(agent.id);

@@ -1,8 +1,9 @@
 import { expect } from "chai";
-import tradeArenaIdl from "../src/idl/trade_arena.json";
+import type { Idl } from "@coral-xyz/anchor";
+import { tradeArenaIdl } from "../src/idl/trade_arena_idl";
 
 function tradeInstructionData(actionData: number[]): Buffer {
-  const instruction = tradeArenaIdl.instructions.find(
+  const instruction = (tradeArenaIdl as Idl).instructions.find(
     (item) => item.name === "trade_position"
   );
   if (!instruction) throw new Error("missing trade_position IDL instruction");

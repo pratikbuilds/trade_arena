@@ -9,7 +9,7 @@ import {
   createTopUpEscrowInstruction,
   escrowPdaFromEscrowAuthority,
 } from "@magicblock-labs/ephemeral-rollups-sdk";
-import tradeArenaIdl from "./idl/trade_arena.json";
+import { tradeArenaIdl } from "./idl/trade_arena_idl";
 import { config } from "./config";
 import {
   findGamePDA,
@@ -75,11 +75,11 @@ function isAnchorIdl(value: unknown): value is Idl {
   );
 }
 
-function createAnchorProgram(
+function createAnchorProgram<T extends Idl = Idl>(
   idlValue: unknown,
   programId: PublicKey,
   connection: Connection
-): Program {
+): Program<T> {
   if (!isRecord(idlValue)) {
     throw new Error("Anchor IDL must be an object");
   }
@@ -94,7 +94,7 @@ function createAnchorProgram(
   }
 
   const provider: Provider = { connection };
-  return new Program(idlWithAddress, provider);
+  return new Program(idlWithAddress, provider) as Program<T>;
 }
 
 /** Fresh Connection to the base layer (Solana devnet/mainnet). */
@@ -127,7 +127,7 @@ export type TradePositionResult = {
 
 /**
  * Build an unsigned base-layer transaction that:
- *   1. Creates the player's USDC ATA if absent (idempotent)
+ *   1. Creates the player's entry-token ATA if absent (idempotent)
  *   2. Joins the game (pays entry fee, initialises PlayerState)
  *   3. Creates a session key for low-latency ER trades
  *   4. Tops up the MagicBlock escrow so the sequencer can commit ER state
@@ -155,12 +155,12 @@ export async function buildJoinArenaTransaction(args: {
     createAssociatedTokenAccountIdempotentInstruction,
     getAssociatedTokenAddressSync,
   } = await import("@solana/spl-token");
-  const playerUsdcAta = getAssociatedTokenAddressSync(tokenMint, player);
+  const playerTokenAta = getAssociatedTokenAddressSync(tokenMint, player);
   const escrow = escrowPdaFromEscrowAuthority(player);
 
   const createAtaIx = createAssociatedTokenAccountIdempotentInstruction(
     player,
-    playerUsdcAta,
+    playerTokenAta,
     player,
     tokenMint
   );
@@ -179,7 +179,7 @@ export async function buildJoinArenaTransaction(args: {
       player,
       game: gamePda,
       playerState: playerStatePda,
-      playerUsdc: playerUsdcAta,
+      playerToken: playerTokenAta,
       vault: vaultPda,
     })
     .instruction();
@@ -272,7 +272,7 @@ export async function buildTradePositionTransaction(args: {
       sessionToken,
       signer,
       priceFeed,
-    } as unknown as Parameters<ReturnType<typeof tradeArenaProgram.methods.tradePosition>["accountsPartial"]>[0])
+    } as any)
     .instruction();
 
   const { blockhash } = await conn.getLatestBlockhash("confirmed");

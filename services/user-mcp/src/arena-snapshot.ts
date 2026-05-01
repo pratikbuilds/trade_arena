@@ -10,11 +10,12 @@ import {
 import { baseConnection, erConnection } from "./transactions";
 import { getUserTrades, type UserTrade } from "./trade-history";
 import { getAgentProfile } from "./agent-profiles";
+import {
+  decodePlayerState,
+  PLAYER_STATE_ACCOUNT_LENGTH,
+  type DecodedPlayerState,
+} from "./player-state";
 
-const PLAYER_STATE_DISCRIMINATOR = Buffer.from([
-  56, 3, 60, 86, 174, 16, 244, 195,
-]);
-const PLAYER_STATE_ACCOUNT_LENGTH = 106;
 const MICROS_PER_USD = 1_000_000;
 const AGENT_COLORS = ["#f43f5e", "#22d3ee", "#a3e635", "#f59e0b", "#c084fc"];
 const SNAPSHOT_CACHE_MS = Number(
@@ -99,19 +100,9 @@ export type ArenaSnapshot = {
   agents: SnapshotAgent[];
 };
 
-type ParsedPlayerState = {
-  player: PublicKey;
-  game: PublicKey;
-  virtualUsdc: bigint;
-  positionSize: bigint;
-  side: SnapshotSide;
-  entryPrice: bigint;
-  realizedPnl: bigint;
-};
-
 type PlayerStateRecord = {
   pubkey: PublicKey;
-  parsed: ParsedPlayerState;
+  parsed: DecodedPlayerState;
   layer: "er" | "base";
 };
 
@@ -140,45 +131,11 @@ function shortPubkey(pubkey: string): string {
   return `${pubkey.slice(0, 4)}...${pubkey.slice(-4)}`;
 }
 
-function readPlayerState(data: Buffer): ParsedPlayerState | null {
-  if (
-    data.length < PLAYER_STATE_ACCOUNT_LENGTH ||
-    !data.subarray(0, 8).equals(PLAYER_STATE_DISCRIMINATOR)
-  ) {
-    return null;
-  }
-
-  let offset = 8;
-  const player = new PublicKey(data.subarray(offset, offset + 32));
-  offset += 32;
-  const game = new PublicKey(data.subarray(offset, offset + 32));
-  offset += 32;
-  const virtualUsdc = data.readBigUInt64LE(offset);
-  offset += 8;
-  const positionSize = data.readBigUInt64LE(offset);
-  offset += 8;
-  const side = data[offset] === 1 ? "short" : "long";
-  offset += 1;
-  const entryPrice = data.readBigUInt64LE(offset);
-  offset += 8;
-  const realizedPnl = data.readBigInt64LE(offset);
-
-  return {
-    player,
-    game,
-    virtualUsdc,
-    positionSize,
-    side,
-    entryPrice,
-    realizedPnl,
-  };
-}
-
 function isPlayerStateForGame(
   game: PublicKey,
   account: AccountInfo<Buffer>
-): ParsedPlayerState | null {
-  const parsed = readPlayerState(Buffer.from(account.data));
+): DecodedPlayerState | null {
+  const parsed = decodePlayerState(Buffer.from(account.data));
   if (!parsed || !parsed.game.equals(game)) {
     return null;
   }
@@ -250,6 +207,50 @@ function estimateExitPrice(trade: OpenTradeDraft, pnlUsd: number): number {
   return trade.entryPrice - pnlUsd / trade.sizeBtc;
 }
 
+function openRowFromDraft(args: {
+  trade: OpenTradeDraft;
+  updatedAtMs: number;
+  markPrice: number | null;
+}): SnapshotTrade {
+  return {
+    ...args.trade,
+    status: "open",
+    openTime: blockTimeMs(args.trade.openBlockTime),
+    openOffsetSeconds: tradeOffset(args.trade.openBlockTime, args.updatedAtMs),
+    markPrice: args.markPrice ?? args.trade.entryPrice,
+  };
+}
+
+function closedRowFromDraft(args: {
+  trade: OpenTradeDraft;
+  id: string;
+  pnlUsd: number;
+  closeTx: string;
+  closeBlockTime: number | null;
+  updatedAtMs: number;
+  sizeBtc?: number;
+  notionalUsd?: number;
+}): SnapshotTrade {
+  const trade = {
+    ...args.trade,
+    id: args.id,
+    sizeBtc: args.sizeBtc ?? args.trade.sizeBtc,
+    notionalUsd: args.notionalUsd ?? args.trade.notionalUsd,
+  };
+
+  return {
+    ...trade,
+    status: "closed",
+    exitPrice: estimateExitPrice(trade, args.pnlUsd),
+    pnlUsd: args.pnlUsd,
+    closeTx: args.closeTx,
+    openTime: blockTimeMs(args.trade.openBlockTime),
+    openOffsetSeconds: tradeOffset(args.trade.openBlockTime, args.updatedAtMs),
+    closeOffsetSeconds: tradeOffset(args.closeBlockTime, args.updatedAtMs),
+    closeTime: blockTimeMs(args.closeBlockTime),
+  };
+}
+
 function tradeOffset(blockTime: number | null, updatedAtMs: number): number {
   if (!blockTime) return -90;
   return blockTime - Math.floor(updatedAtMs / 1000) + 90;
@@ -259,27 +260,53 @@ function blockTimeMs(blockTime: number | null): number | undefined {
   return typeof blockTime === "number" ? blockTime * 1000 : undefined;
 }
 
-function buildTrades(
+export function buildTrades(
   playerId: string,
   trades: UserTrade[],
-  playerState: ParsedPlayerState,
+  playerState: DecodedPlayerState,
   updatedAtMs: number,
   markPrice: number | null
 ): SnapshotTrade[] {
   const chronological = [...trades].reverse();
   const rows: SnapshotTrade[] = [];
   let openTrade: OpenTradeDraft | null = null;
+  let openRowIndex = -1;
   let cycle = 0;
+  let partialCloseCount = 0;
 
   for (const trade of chronological) {
     if (trade.err) continue;
 
     if (trade.action.kind === "increase") {
-      cycle += 1;
       const quantity = logNumber(trade.logs, "quantity");
-      const entry = logNumber(trade.logs, "entry") ?? playerState.entryPrice;
+      const entry =
+        logNumber(trade.logs, "avg_entry") ??
+        logNumber(trade.logs, "entry") ??
+        playerState.entryPrice;
       const notionalUsd = microsToUsd(trade.action.notional_usdc);
       const sizeBtc = quantity ? microsToUsd(quantity) : 0;
+
+      const currentOpenTrade: OpenTradeDraft | null = openTrade;
+      if (currentOpenTrade && currentOpenTrade.side === trade.action.side) {
+        const updatedOpenTrade: OpenTradeDraft = {
+          ...currentOpenTrade,
+          notionalUsd: currentOpenTrade.notionalUsd + notionalUsd,
+          sizeBtc: currentOpenTrade.sizeBtc + sizeBtc,
+          entryPrice: microsToUsd(entry),
+        };
+        openTrade = updatedOpenTrade;
+        if (openRowIndex >= 0) {
+          rows[openRowIndex] = openRowFromDraft({
+            trade: updatedOpenTrade,
+            updatedAtMs,
+            markPrice,
+          });
+        }
+        continue;
+      }
+
+      cycle += 1;
+      partialCloseCount = 0;
       openTrade = {
         id: `${playerId}-${cycle}`,
         cycle,
@@ -290,41 +317,112 @@ function buildTrades(
         openTx: trade.signature,
         openBlockTime: trade.block_time,
       };
-      rows.push({
-        ...openTrade,
-        status: "open",
-        openTime: blockTimeMs(trade.block_time),
-        openOffsetSeconds: tradeOffset(trade.block_time, updatedAtMs),
-        markPrice: markPrice ?? microsToUsd(playerState.entryPrice),
+      rows.push(
+        openRowFromDraft({
+          trade: openTrade,
+          updatedAtMs,
+          markPrice,
+        })
+      );
+      openRowIndex = rows.length - 1;
+      continue;
+    }
+
+    if (trade.action.kind === "reduce") {
+      if (!openTrade) {
+        continue;
+      }
+      const currentOpenTrade: OpenTradeDraft = openTrade;
+
+      const quantity = logNumber(trade.logs, "quantity");
+      const remaining = logNumber(trade.logs, "remaining");
+      const pnl = logNumber(trade.logs, "pnl") ?? 0n;
+      const pnlUsd = microsToUsd(pnl);
+      const reducedSizeBtc = quantity
+        ? microsToUsd(quantity)
+        : Math.min(
+            currentOpenTrade.sizeBtc,
+            microsToUsd(trade.action.notional_usdc)
+          );
+      const remainingSizeBtc = remaining
+        ? microsToUsd(remaining)
+        : Math.max(0, currentOpenTrade.sizeBtc - reducedSizeBtc);
+      const isFullReduce =
+        remainingSizeBtc <= 0 ||
+        reducedSizeBtc >= currentOpenTrade.sizeBtc ||
+        Math.abs(currentOpenTrade.sizeBtc - reducedSizeBtc) < 0.000001;
+
+      if (isFullReduce) {
+        const closed = closedRowFromDraft({
+          trade: currentOpenTrade,
+          id: currentOpenTrade.id,
+          pnlUsd,
+          closeTx: trade.signature,
+          closeBlockTime: trade.block_time,
+          updatedAtMs,
+        });
+        if (openRowIndex >= 0) {
+          rows[openRowIndex] = closed;
+        } else {
+          rows.push(closed);
+        }
+        openTrade = null;
+        openRowIndex = -1;
+        continue;
+      }
+
+      partialCloseCount += 1;
+      rows.push(
+        closedRowFromDraft({
+          trade: currentOpenTrade,
+          id: `${currentOpenTrade.id}-reduce-${partialCloseCount}`,
+          pnlUsd,
+          closeTx: trade.signature,
+          closeBlockTime: trade.block_time,
+          updatedAtMs,
+          sizeBtc: reducedSizeBtc,
+          notionalUsd: microsToUsd(trade.action.notional_usdc),
+        })
+      );
+
+      const remainingOpenTrade: OpenTradeDraft = {
+        ...currentOpenTrade,
+        sizeBtc: remainingSizeBtc,
+        notionalUsd: Math.max(
+          0,
+          currentOpenTrade.notionalUsd - microsToUsd(trade.action.notional_usdc)
+        ),
+      };
+      openTrade = remainingOpenTrade;
+      if (openRowIndex >= 0) {
+        rows[openRowIndex] = openRowFromDraft({
+          trade: remainingOpenTrade,
+          updatedAtMs,
+          markPrice,
+        });
+      }
+      continue;
+    }
+
+    if (trade.action.kind === "close_all" && openTrade) {
+      const pnl = logNumber(trade.logs, "pnl") ?? 0n;
+      const pnlUsd = microsToUsd(pnl);
+      const closed = closedRowFromDraft({
+        trade: openTrade,
+        id: openTrade.id,
+        pnlUsd,
+        closeTx: trade.signature,
+        closeBlockTime: trade.block_time,
+        updatedAtMs,
       });
-      continue;
+      if (openRowIndex >= 0) {
+        rows[openRowIndex] = closed;
+      } else {
+        rows.push(closed);
+      }
+      openTrade = null;
+      openRowIndex = -1;
     }
-
-    if (trade.action.kind !== "close_all" || !openTrade) {
-      continue;
-    }
-
-    const pnl = logNumber(trade.logs, "pnl") ?? 0n;
-    const pnlUsd = microsToUsd(pnl);
-    const rowIndex = rows.findIndex((row) => row.id === openTrade?.id);
-    const closeOffsetSeconds = tradeOffset(trade.block_time, updatedAtMs);
-    const closed: SnapshotTrade = {
-      ...openTrade,
-      status: "closed",
-      exitPrice: estimateExitPrice(openTrade, pnlUsd),
-      pnlUsd,
-      closeTx: trade.signature,
-      openTime: blockTimeMs(openTrade.openBlockTime),
-      openOffsetSeconds: tradeOffset(openTrade.openBlockTime, updatedAtMs),
-      closeOffsetSeconds,
-      closeTime: blockTimeMs(trade.block_time),
-    };
-    if (rowIndex >= 0) {
-      rows[rowIndex] = closed;
-    } else {
-      rows.push(closed);
-    }
-    openTrade = null;
   }
 
   return rows;

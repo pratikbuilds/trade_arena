@@ -8,6 +8,7 @@ test-ledger
 .yarn
 .surfpool
 .brand-preview
+.private-transcripts
 artifacts
 *.bak
 idea-shortlist-*.html

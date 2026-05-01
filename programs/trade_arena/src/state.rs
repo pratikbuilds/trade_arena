@@ -12,7 +12,7 @@ pub struct Game {
     pub game_id: u64,
     /// Pyth push-oracle price feed for the single tradeable asset
     pub asset_feed: Pubkey,
-    /// Real USDC entry fee per player (6 decimals)
+    /// Real token entry fee per player, in the selected mint's base units.
     pub entry_fee: u64,
     /// Game duration in seconds — must be 300 (5 min) or 900 (15 min)
     pub duration: i64,
@@ -21,10 +21,10 @@ pub struct Game {
     pub status: GameStatus,
     pub player_count: u32,
     pub max_players: u32,
-    /// Accumulated real USDC in the prize vault
+    /// Accumulated real entry tokens in the prize vault.
     pub prize_pool: u64,
-    /// SPL token mint for the entry fee (expected to be USDC)
-    pub usdc_mint: Pubkey,
+    /// SPL token mint for the entry fee.
+    pub token_mint: Pubkey,
     /// Highest virtual portfolio value seen so far (updated in `end_game`)
     pub leader_value: u64,
     /// Set once in `end_game` — only this pubkey can call `claim_prize`

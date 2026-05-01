@@ -1,7 +1,7 @@
 import { PublicKey, type AccountInfo, type Connection } from "@solana/web3.js";
 import { findPlayerStatePDA } from "./pdas";
 
-const PLAYER_STATE_DISCRIMINATOR = Buffer.from([
+export const PLAYER_STATE_DISCRIMINATOR = Buffer.from([
   56, 3, 60, 86, 174, 16, 244, 195,
 ]);
 export const PLAYER_STATE_ACCOUNT_LENGTH = 106;

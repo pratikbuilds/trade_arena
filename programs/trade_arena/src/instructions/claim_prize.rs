@@ -20,15 +20,17 @@ pub struct ClaimPrize<'info> {
         mut,
         seeds = [VAULT_SEED, game.key().as_ref()],
         bump = game.vault_bump,
+        token::mint = game.token_mint,
+        token::authority = game,
     )]
     pub vault: Account<'info, TokenAccount>,
 
     #[account(
         mut,
-        token::mint = game.usdc_mint,
+        token::mint = game.token_mint,
         token::authority = winner,
     )]
-    pub winner_usdc: Account<'info, TokenAccount>,
+    pub winner_token: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
 }
@@ -47,7 +49,7 @@ pub fn handler(ctx: Context<ClaimPrize>) -> Result<()> {
             ctx.accounts.token_program.to_account_info(),
             Transfer {
                 from: ctx.accounts.vault.to_account_info(),
-                to: ctx.accounts.winner_usdc.to_account_info(),
+                to: ctx.accounts.winner_token.to_account_info(),
                 authority: ctx.accounts.game.to_account_info(),
             },
             &[seeds],
@@ -56,7 +58,7 @@ pub fn handler(ctx: Context<ClaimPrize>) -> Result<()> {
     )?;
 
     msg!(
-        "Prize of {} USDC lamports paid to winner {}",
+        "Prize of {} token base units paid to winner {}",
         amount,
         ctx.accounts.winner.key()
     );

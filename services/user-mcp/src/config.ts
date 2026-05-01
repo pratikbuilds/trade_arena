@@ -7,7 +7,7 @@ const EnvSchema = z.object({
   TRADE_ARENA_PROGRAM_ID: z
     .string()
     .min(32)
-    .default("ETZ1wJJihV6xfcf9GtCp9sNp2cv6cMGeyuFPSVHQJ4C5"),
+    .default("HxqxwrurkZDcyVQVTaiz7DSaKXdPgypMzGiRj7kPjBdB"),
 });
 
 export type Config = z.infer<typeof EnvSchema>;

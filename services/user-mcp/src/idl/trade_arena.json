@@ -1,5 +1,5 @@
 {
-  "address": "ETZ1wJJihV6xfcf9GtCp9sNp2cv6cMGeyuFPSVHQJ4C5",
+  "address": "HxqxwrurkZDcyVQVTaiz7DSaKXdPgypMzGiRj7kPjBdB",
   "metadata": {
     "name": "trade_arena",
     "version": "0.1.0",
@@ -52,7 +52,7 @@
           }
         },
         {
-          "name": "winner_usdc",
+          "name": "winner_token",
           "writable": true
         },
         {
@@ -211,9 +211,9 @@
           }
         },
         {
-          "name": "usdc_mint",
+          "name": "token_mint",
           "docs": [
-            "The SPL mint players will use for their entry fee (expected: USDC)"
+            "The SPL mint players will use for their entry fee."
           ]
         },
         {
@@ -328,38 +328,38 @@
             "program": {
               "kind": "const",
               "value": [
-                199,
-                245,
-                59,
-                90,
-                42,
-                179,
-                200,
-                65,
-                188,
-                75,
-                117,
-                109,
-                27,
-                66,
-                111,
-                12,
-                156,
-                70,
-                223,
-                41,
-                83,
-                115,
-                127,
-                67,
-                253,
-                128,
-                45,
-                219,
+                252,
                 9,
-                230,
-                68,
-                134
+                76,
+                188,
+                146,
+                138,
+                36,
+                154,
+                49,
+                81,
+                147,
+                192,
+                212,
+                83,
+                254,
+                64,
+                116,
+                154,
+                67,
+                125,
+                83,
+                198,
+                209,
+                238,
+                107,
+                52,
+                72,
+                45,
+                55,
+                103,
+                155,
+                234
               ]
             }
           }
@@ -465,7 +465,7 @@
         },
         {
           "name": "owner_program",
-          "address": "ETZ1wJJihV6xfcf9GtCp9sNp2cv6cMGeyuFPSVHQJ4C5"
+          "address": "HxqxwrurkZDcyVQVTaiz7DSaKXdPgypMzGiRj7kPjBdB"
         },
         {
           "name": "delegation_program",
@@ -531,38 +531,38 @@
             "program": {
               "kind": "const",
               "value": [
-                199,
-                245,
-                59,
-                90,
-                42,
-                179,
-                200,
-                65,
-                188,
-                75,
-                117,
-                109,
-                27,
-                66,
-                111,
-                12,
-                156,
-                70,
-                223,
-                41,
-                83,
-                115,
-                127,
-                67,
-                253,
-                128,
-                45,
-                219,
+                252,
                 9,
-                230,
-                68,
-                134
+                76,
+                188,
+                146,
+                138,
+                36,
+                154,
+                49,
+                81,
+                147,
+                192,
+                212,
+                83,
+                254,
+                64,
+                116,
+                154,
+                67,
+                125,
+                83,
+                198,
+                209,
+                238,
+                107,
+                52,
+                72,
+                45,
+                55,
+                103,
+                155,
+                234
               ]
             }
           }
@@ -667,7 +667,7 @@
         },
         {
           "name": "owner_program",
-          "address": "ETZ1wJJihV6xfcf9GtCp9sNp2cv6cMGeyuFPSVHQJ4C5"
+          "address": "HxqxwrurkZDcyVQVTaiz7DSaKXdPgypMzGiRj7kPjBdB"
         },
         {
           "name": "delegation_program",
@@ -757,7 +757,7 @@
           }
         },
         {
-          "name": "player_usdc",
+          "name": "player_token",
           "writable": true
         },
         {
@@ -1152,7 +1152,7 @@
           {
             "name": "entry_fee",
             "docs": [
-              "Real USDC entry fee per player (6 decimals)"
+              "Real token entry fee per player, in the selected mint's base units."
             ],
             "type": "u64"
           },
@@ -1189,14 +1189,14 @@
           {
             "name": "prize_pool",
             "docs": [
-              "Accumulated real USDC in the prize vault"
+              "Accumulated real entry tokens in the prize vault."
             ],
             "type": "u64"
           },
           {
-            "name": "usdc_mint",
+            "name": "token_mint",
             "docs": [
-              "SPL token mint for the entry fee (expected to be USDC)"
+              "SPL token mint for the entry fee."
             ],
             "type": "pubkey"
           },
